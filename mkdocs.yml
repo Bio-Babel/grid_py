@@ -1,0 +1,36 @@
+site_name: grid_py
+use_directory_urls: false
+theme:
+  name: material
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [.]
+          options:
+            docstring_style: numpy
+            separate_signature: true
+            show_signature_annotations: true
+            signature_crossrefs: true
+  - mkdocs-jupyter:
+      include_source: true
+
+nav:
+  - Home: index.md
+  - API Reference: api.md
+  - Tutorials:
+    - Introduction to grid_py: tutorials/grid.ipynb
+    - Working with Grobs: tutorials/grobs.ipynb
+    - Working with Viewports: tutorials/viewports.ipynb
+    - Locations vs Dimensions: tutorials/locndimn.ipynb
+    - Frames and Packing: tutorials/frame.ipynb
+    - The Display List: tutorials/displaylist.ipynb
+    - Building a Plot: tutorials/plotexample.ipynb
+    - Interactive Editing: tutorials/interactive.ipynb
+    - Move-To and Line-To: tutorials/moveline.ipynb
+    - Non-Finite Values: tutorials/nonfinite.ipynb
+    - Rotated Viewports: tutorials/rotated.ipynb
+    - Saving and Loading: tutorials/saveload.ipynb
+    - Sharing Parameters: tutorials/sharing.ipynb
