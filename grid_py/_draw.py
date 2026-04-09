@@ -1,10 +1,7 @@
 """Core drawing engine for grid_py -- Python port of R's grid drawing functions.
 
-This module handles rendering grobs to matplotlib, porting functionality from
-R's ``grid/R/grid.R`` (``grid.newpage``, ``grid.draw``, ``grid.record``,
-``recordGrob``, ``grid.delay``, ``delayGrob``, ``grid.DLapply``,
-``grid.refresh``, ``grid.locator``) and ``grid/R/grob.R`` (``drawGrob``,
-``drawGTree``, ``drawGList``, ``preDraw``, ``postDraw``).
+This module handles rendering grobs via :class:`CairoRenderer`, porting
+functionality from R's ``grid/R/grid.R`` and ``grid/R/grob.R``.
 
 The central entry point is :func:`grid_draw`, which performs S3-like dispatch
 on grobs, gTrees, gLists, viewports, and viewport paths.
@@ -44,122 +41,6 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# Gpar -> matplotlib keyword conversion
-# ---------------------------------------------------------------------------
-
-# Mapping from R line-type names to matplotlib dash patterns
-_LTY_MAP: Dict[str, str] = {
-    "solid": "solid",
-    "dashed": "dashed",
-    "dotted": "dotted",
-    "dotdash": "dashdot",
-    "longdash": (0, (10, 3)),  # type: ignore[dict-item]
-    "twodash": (0, (5, 2, 10, 2)),  # type: ignore[dict-item]
-}
-
-_LINEEND_MAP: Dict[str, str] = {
-    "round": "round",
-    "butt": "butt",
-    "square": "projecting",
-}
-
-_LINEJOIN_MAP: Dict[str, str] = {
-    "round": "round",
-    "mitre": "miter",
-    "bevel": "bevel",
-}
-
-
-def _gpar_to_mpl(gp: Optional[Gpar]) -> Dict[str, Any]:
-    """Convert a :class:`Gpar` instance to matplotlib keyword arguments.
-
-    Parameters
-    ----------
-    gp : Gpar or None
-        The graphical parameters to convert.  If ``None`` an empty dict
-        is returned.
-
-    Returns
-    -------
-    dict[str, Any]
-        A dictionary of matplotlib-compatible keyword arguments suitable
-        for passing to patch constructors, ``ax.plot``, ``ax.text``, etc.
-    """
-    if gp is None:
-        return {}
-
-    kw: Dict[str, Any] = {}
-
-    # -- colour / fill -------------------------------------------------------
-    col = gp.get("col", None)
-    if col is not None:
-        kw["color"] = col[0] if isinstance(col, (list, tuple)) else col
-
-    fill = gp.get("fill", None)
-    if fill is not None:
-        kw["facecolor"] = fill[0] if isinstance(fill, (list, tuple)) else fill
-
-    # -- alpha ---------------------------------------------------------------
-    alpha = gp.get("alpha", None)
-    if alpha is not None:
-        kw["alpha"] = float(alpha[0] if isinstance(alpha, (list, tuple)) else alpha)
-
-    # -- line properties -----------------------------------------------------
-    lwd = gp.get("lwd", None)
-    if lwd is not None:
-        val = lwd[0] if isinstance(lwd, (list, tuple)) else lwd
-        kw["linewidth"] = float(val)
-
-    lty = gp.get("lty", None)
-    if lty is not None:
-        val = lty[0] if isinstance(lty, (list, tuple)) else lty
-        kw["linestyle"] = _LTY_MAP.get(str(val), "solid")
-
-    lineend = gp.get("lineend", None)
-    if lineend is not None:
-        val = lineend[0] if isinstance(lineend, (list, tuple)) else lineend
-        capstyle = _LINEEND_MAP.get(str(val), "butt")
-        kw["solid_capstyle"] = capstyle
-        kw["dash_capstyle"] = capstyle
-
-    linejoin = gp.get("linejoin", None)
-    if linejoin is not None:
-        val = linejoin[0] if isinstance(linejoin, (list, tuple)) else linejoin
-        joinstyle = _LINEJOIN_MAP.get(str(val), "round")
-        kw["solid_joinstyle"] = joinstyle
-        kw["dash_joinstyle"] = joinstyle
-
-    # -- font properties -----------------------------------------------------
-    fontsize = gp.get("fontsize", None)
-    cex = gp.get("cex", None)
-    if fontsize is not None:
-        fs = float(fontsize[0] if isinstance(fontsize, (list, tuple)) else fontsize)
-        if cex is not None:
-            cx = float(cex[0] if isinstance(cex, (list, tuple)) else cex)
-            fs *= cx
-        kw["fontsize"] = fs
-
-    fontfamily = gp.get("fontfamily", None)
-    if fontfamily is not None:
-        val = fontfamily[0] if isinstance(fontfamily, (list, tuple)) else fontfamily
-        kw["fontfamily"] = str(val)
-
-    fontface = gp.get("fontface", None)
-    if fontface is not None:
-        val = fontface[0] if isinstance(fontface, (list, tuple)) else fontface
-        val = int(val) if isinstance(val, (int, float)) else val
-        if val in (2, "bold"):
-            kw["fontweight"] = "bold"
-        if val in (3, "italic", "oblique"):
-            kw["fontstyle"] = "italic"
-        if val in (4, "bold.italic"):
-            kw["fontweight"] = "bold"
-            kw["fontstyle"] = "italic"
-
-    return kw
-
-
-# ---------------------------------------------------------------------------
 # Internal rendering helpers
 # ---------------------------------------------------------------------------
 
@@ -187,201 +68,144 @@ def _unit_to_array(val: Any) -> np.ndarray:
 
 def _render_grob(
     grob: Grob,
-    ax: Any,
+    renderer: Any,
     gp: Optional[Gpar] = None,
     transform: Optional[np.ndarray] = None,
 ) -> None:
-    """Render a single grob to a matplotlib ``Axes``.
+    """Render a single grob via the :class:`CairoRenderer`.
 
-    Dispatches on ``grob._grid_class`` to create the appropriate matplotlib
-    artist and add it to *ax*.
+    Dispatches on ``grob._grid_class`` to call the appropriate renderer
+    method.
 
     Parameters
     ----------
     grob : Grob
         The graphical object to render.
-    ax : matplotlib.axes.Axes
-        The target axes.
+    renderer : CairoRenderer
+        The Cairo renderer.
     gp : Gpar or None, optional
         Resolved graphical parameters (merged from context + grob).
     transform : numpy.ndarray or None, optional
         3x3 affine transform matrix; currently reserved for future use.
-
-    Notes
-    -----
-    Unrecognised ``_grid_class`` values are silently ignored (a warning is
-    emitted at DEBUG level).
     """
-    import matplotlib.pyplot as plt  # noqa: F811 – local import
-    import matplotlib.patches as mpatches
-    from matplotlib.collections import LineCollection
-    from matplotlib.patches import Polygon
-    from matplotlib.path import Path as MplPath
-    from matplotlib.patches import PathPatch
-
-    if ax is None:
+    if renderer is None:
         return
 
     cls = getattr(grob, "_grid_class", "grob")
-    mpl_kw = _gpar_to_mpl(gp)
 
     # ---- rect -----------------------------------------------------------
     if cls == "rect":
-        x = _unit_to_float(getattr(grob, "x", 0.0))
-        y = _unit_to_float(getattr(grob, "y", 0.0))
-        w = _unit_to_float(getattr(grob, "width", 1.0))
-        h = _unit_to_float(getattr(grob, "height", 1.0))
-        hjust = float(getattr(grob, "hjust", None) or 0.5)
-        vjust = float(getattr(grob, "vjust", None) or 0.5)
-        x0 = x - w * hjust
-        y0 = y - h * vjust
-        fc = mpl_kw.pop("facecolor", mpl_kw.pop("color", "white"))
-        ec = mpl_kw.pop("color", "black") if "facecolor" in {} else mpl_kw.pop("color", "black")
-        # Re-extract edge colour: col -> edgecolor, fill -> facecolor
-        ec_raw = gp.get("col", None) if gp else None
-        fc_raw = gp.get("fill", None) if gp else None
-        ec_use = (ec_raw[0] if isinstance(ec_raw, (list, tuple)) else ec_raw) if ec_raw is not None else "black"
-        fc_use = (fc_raw[0] if isinstance(fc_raw, (list, tuple)) else fc_raw) if fc_raw is not None else "white"
-        patch_kw = {k: v for k, v in mpl_kw.items() if k not in ("color", "facecolor")}
-        rect = mpatches.Rectangle(
-            (x0, y0), w, h,
-            facecolor=fc_use,
-            edgecolor=ec_use,
-            **patch_kw,
+        renderer.draw_rect(
+            x=_unit_to_float(getattr(grob, "x", 0.0)),
+            y=_unit_to_float(getattr(grob, "y", 0.0)),
+            w=_unit_to_float(getattr(grob, "width", 1.0)),
+            h=_unit_to_float(getattr(grob, "height", 1.0)),
+            hjust=float(getattr(grob, "hjust", None) or 0.5),
+            vjust=float(getattr(grob, "vjust", None) or 0.5),
+            gp=gp,
         )
-        ax.add_patch(rect)
+
+    # ---- roundrect ------------------------------------------------------
+    elif cls == "roundrect":
+        renderer.draw_roundrect(
+            x=_unit_to_float(getattr(grob, "x", 0.0)),
+            y=_unit_to_float(getattr(grob, "y", 0.0)),
+            w=_unit_to_float(getattr(grob, "width", 1.0)),
+            h=_unit_to_float(getattr(grob, "height", 1.0)),
+            r=_unit_to_float(getattr(grob, "r", 0.0)),
+            hjust=float(getattr(grob, "hjust", None) or 0.5),
+            vjust=float(getattr(grob, "vjust", None) or 0.5),
+            gp=gp,
+        )
 
     # ---- circle ---------------------------------------------------------
     elif cls == "circle":
-        x = _unit_to_float(getattr(grob, "x", 0.5))
-        y = _unit_to_float(getattr(grob, "y", 0.5))
-        r = _unit_to_float(getattr(grob, "r", 0.5))
-        ec_raw = gp.get("col", None) if gp else None
-        fc_raw = gp.get("fill", None) if gp else None
-        ec_use = (ec_raw[0] if isinstance(ec_raw, (list, tuple)) else ec_raw) if ec_raw is not None else "black"
-        fc_use = (fc_raw[0] if isinstance(fc_raw, (list, tuple)) else fc_raw) if fc_raw is not None else "white"
-        patch_kw = {k: v for k, v in mpl_kw.items() if k not in ("color", "facecolor")}
-        circ = mpatches.Circle(
-            (x, y), r,
-            facecolor=fc_use,
-            edgecolor=ec_use,
-            **patch_kw,
+        renderer.draw_circle(
+            x=_unit_to_float(getattr(grob, "x", 0.5)),
+            y=_unit_to_float(getattr(grob, "y", 0.5)),
+            r=_unit_to_float(getattr(grob, "r", 0.5)),
+            gp=gp,
         )
-        ax.add_patch(circ)
 
     # ---- lines / polyline ------------------------------------------------
     elif cls in ("lines", "polyline"):
         x = _unit_to_array(getattr(grob, "x", [0.0, 1.0]))
         y = _unit_to_array(getattr(grob, "y", [0.0, 1.0]))
-        line_kw = {k: v for k, v in mpl_kw.items() if k not in ("facecolor",)}
-        ax.plot(x, y, **line_kw)
+        id_ = getattr(grob, "id", None)
+        if id_ is not None:
+            id_ = np.atleast_1d(np.asarray(id_, dtype=int))
+        renderer.draw_polyline(x, y, id_=id_, gp=gp)
 
     # ---- segments --------------------------------------------------------
     elif cls == "segments":
-        x0 = _unit_to_array(getattr(grob, "x0", []))
-        y0 = _unit_to_array(getattr(grob, "y0", []))
-        x1 = _unit_to_array(getattr(grob, "x1", []))
-        y1 = _unit_to_array(getattr(grob, "y1", []))
-        segs = [[(sx0, sy0), (sx1, sy1)] for sx0, sy0, sx1, sy1
-                in zip(x0, y0, x1, y1)]
-        col = mpl_kw.pop("color", "black")
-        lw = mpl_kw.pop("linewidth", 1.0)
-        ls = mpl_kw.pop("linestyle", "solid")
-        seg_kw = {k: v for k, v in mpl_kw.items()
-                  if k not in ("facecolor",)}
-        lc = LineCollection(segs, colors=col, linewidths=lw,
-                            linestyles=ls, **seg_kw)
-        ax.add_collection(lc)
+        renderer.draw_segments(
+            x0=_unit_to_array(getattr(grob, "x0", [])),
+            y0=_unit_to_array(getattr(grob, "y0", [])),
+            x1=_unit_to_array(getattr(grob, "x1", [])),
+            y1=_unit_to_array(getattr(grob, "y1", [])),
+            gp=gp,
+        )
 
     # ---- polygon ---------------------------------------------------------
     elif cls == "polygon":
-        x = _unit_to_array(getattr(grob, "x", []))
-        y = _unit_to_array(getattr(grob, "y", []))
-        if len(x) > 0:
-            verts = np.column_stack([x, y])
-            ec_raw = gp.get("col", None) if gp else None
-            fc_raw = gp.get("fill", None) if gp else None
-            ec_use = (ec_raw[0] if isinstance(ec_raw, (list, tuple)) else ec_raw) if ec_raw is not None else "black"
-            fc_use = (fc_raw[0] if isinstance(fc_raw, (list, tuple)) else fc_raw) if fc_raw is not None else "white"
-            patch_kw = {k: v for k, v in mpl_kw.items() if k not in ("color", "facecolor")}
-            poly = Polygon(verts, closed=True,
-                           facecolor=fc_use, edgecolor=ec_use,
-                           **patch_kw)
-            ax.add_patch(poly)
+        renderer.draw_polygon(
+            x=_unit_to_array(getattr(grob, "x", [])),
+            y=_unit_to_array(getattr(grob, "y", [])),
+            gp=gp,
+        )
 
     # ---- text ------------------------------------------------------------
     elif cls == "text":
-        x = _unit_to_float(getattr(grob, "x", 0.5))
-        y = _unit_to_float(getattr(grob, "y", 0.5))
-        label = getattr(grob, "label", "")
-        rot = float(getattr(grob, "rot", 0.0))
-        hjust = getattr(grob, "hjust", None) or 0.5
-        vjust = getattr(grob, "vjust", None) or 0.5
-        ha_map = {0.0: "left", 0.5: "center", 1.0: "right"}
-        va_map = {0.0: "bottom", 0.5: "center", 1.0: "top"}
-        ha = ha_map.get(float(hjust), "center")
-        va = va_map.get(float(vjust), "center")
-        text_kw = {k: v for k, v in mpl_kw.items()
-                   if k not in ("facecolor", "linewidth", "linestyle")}
-        ax.text(x, y, str(label), rotation=rot,
-                ha=ha, va=va, **text_kw)
+        renderer.draw_text(
+            x=_unit_to_float(getattr(grob, "x", 0.5)),
+            y=_unit_to_float(getattr(grob, "y", 0.5)),
+            label=getattr(grob, "label", ""),
+            rot=float(getattr(grob, "rot", 0.0)),
+            hjust=float(getattr(grob, "hjust", None) or 0.5),
+            vjust=float(getattr(grob, "vjust", None) or 0.5),
+            gp=gp,
+        )
 
     # ---- points ----------------------------------------------------------
     elif cls == "points":
-        x = _unit_to_array(getattr(grob, "x", []))
-        y = _unit_to_array(getattr(grob, "y", []))
-        s = _unit_to_float(getattr(grob, "size", 1.0)) * 20  # rough pt-to-area scale
-        c = mpl_kw.pop("color", "black")
-        scatter_kw = {k: v for k, v in mpl_kw.items()
-                      if k not in ("facecolor", "linewidth", "linestyle",
-                                   "fontsize", "fontfamily")}
-        ax.scatter(x, y, s=s, c=c, **scatter_kw)
+        pch_raw = getattr(grob, "pch", 19)
+        if hasattr(pch_raw, "__len__"):
+            pch_raw = pch_raw[0] if len(pch_raw) > 0 else 19
+        renderer.draw_points(
+            x=_unit_to_array(getattr(grob, "x", [])),
+            y=_unit_to_array(getattr(grob, "y", [])),
+            size=_unit_to_float(getattr(grob, "size", 1.0)),
+            pch=int(pch_raw),
+            gp=gp,
+        )
 
     # ---- pathgrob --------------------------------------------------------
     elif cls == "pathgrob":
         x = _unit_to_array(getattr(grob, "x", []))
         y = _unit_to_array(getattr(grob, "y", []))
         path_id = getattr(grob, "pathId", None)
-        rule = getattr(grob, "rule", "winding")
         if path_id is None:
             path_id = np.ones(len(x), dtype=int)
         else:
             path_id = np.atleast_1d(np.asarray(path_id, dtype=int))
-        unique_ids = np.unique(path_id)
-        vertices: List[Tuple[float, float]] = []
-        codes: List[int] = []
-        for pid in unique_ids:
-            mask = path_id == pid
-            px = x[mask]
-            py = y[mask]
-            for j, (vx, vy) in enumerate(zip(px, py)):
-                vertices.append((float(vx), float(vy)))
-                codes.append(MplPath.MOVETO if j == 0 else MplPath.LINETO)
-            vertices.append((float(px[0]), float(py[0])))
-            codes.append(MplPath.CLOSEPOLY)
-        if vertices:
-            mpath = MplPath(vertices, codes)
-            ec_raw = gp.get("col", None) if gp else None
-            fc_raw = gp.get("fill", None) if gp else None
-            ec_use = (ec_raw[0] if isinstance(ec_raw, (list, tuple)) else ec_raw) if ec_raw is not None else "black"
-            fc_use = (fc_raw[0] if isinstance(fc_raw, (list, tuple)) else fc_raw) if fc_raw is not None else "white"
-            patch_kw = {k: v for k, v in mpl_kw.items() if k not in ("color", "facecolor")}
-            pp = PathPatch(mpath, facecolor=fc_use, edgecolor=ec_use,
-                           **patch_kw)
-            ax.add_patch(pp)
+        renderer.draw_path(
+            x=x, y=y, path_id=path_id,
+            rule=getattr(grob, "rule", "winding"),
+            gp=gp,
+        )
 
     # ---- rastergrob ------------------------------------------------------
     elif cls == "rastergrob":
         image = getattr(grob, "image", None)
-        x = _unit_to_float(getattr(grob, "x", 0.0))
-        y = _unit_to_float(getattr(grob, "y", 0.0))
-        w = _unit_to_float(getattr(grob, "width", 1.0))
-        h = _unit_to_float(getattr(grob, "height", 1.0))
         if image is not None:
-            extent = [x, x + w, y, y + h]
-            interp = getattr(grob, "interpolate", True)
-            ax.imshow(image, extent=extent, aspect="auto",
-                      interpolation="bilinear" if interp else "nearest")
+            renderer.draw_raster(
+                image=image,
+                x=_unit_to_float(getattr(grob, "x", 0.0)),
+                y=_unit_to_float(getattr(grob, "y", 0.0)),
+                w=_unit_to_float(getattr(grob, "width", 1.0)),
+                h=_unit_to_float(getattr(grob, "height", 1.0)),
+                interpolate=getattr(grob, "interpolate", True),
+            )
 
     # ---- null / no-op ---------------------------------------------------
     elif cls == "null":
@@ -389,23 +213,19 @@ def _render_grob(
 
     # ---- move.to / line.to -----------------------------------------------
     elif cls == "move.to":
-        # Record the pen position on the axes (stash for a subsequent line.to)
-        ax._grid_pen_x = _unit_to_float(getattr(grob, "x", 0.0))
-        ax._grid_pen_y = _unit_to_float(getattr(grob, "y", 0.0))
+        renderer.move_to(
+            _unit_to_float(getattr(grob, "x", 0.0)),
+            _unit_to_float(getattr(grob, "y", 0.0)),
+        )
 
     elif cls == "line.to":
-        x1 = _unit_to_float(getattr(grob, "x", 0.0))
-        y1 = _unit_to_float(getattr(grob, "y", 0.0))
-        x0 = getattr(ax, "_grid_pen_x", 0.0)
-        y0 = getattr(ax, "_grid_pen_y", 0.0)
-        line_kw = {k: v for k, v in mpl_kw.items()
-                   if k not in ("facecolor",)}
-        ax.plot([x0, x1], [y0, y1], **line_kw)
-        ax._grid_pen_x = x1
-        ax._grid_pen_y = y1
+        renderer.line_to(
+            _unit_to_float(getattr(grob, "x", 0.0)),
+            _unit_to_float(getattr(grob, "y", 0.0)),
+            gp=gp,
+        )
 
     else:
-        # Unknown class -- no-op with a debug-level warning.
         warnings.warn(
             f"_render_grob: unknown grob class '{cls}', skipping",
             stacklevel=2,
@@ -519,11 +339,11 @@ def _draw_grob(x: Grob) -> None:
         x = x.make_content()
         x.draw_details(recording=False)
 
-        # Render to matplotlib
-        fig, ax = state.get_device()
-        if ax is not None:
+        # Render to Cairo
+        renderer = state.get_renderer()
+        if renderer is not None:
             merged_gp = _merge_gpar(state.get_gpar(), x.gp)
-            _render_grob(x, ax, gp=merged_gp)
+            _render_grob(x, renderer, gp=merged_gp)
 
         # postDraw: postDrawDetails -> pop vp
         x.post_draw_details()
@@ -571,11 +391,11 @@ def _draw_gtree(x: GTree) -> None:
         x = x.make_content()
         x.draw_details(recording=False)
 
-        # Render the gTree itself to matplotlib (in case it has direct content)
-        fig, ax = state.get_device()
-        if ax is not None:
+        # Render the gTree itself (in case it has direct content)
+        renderer = state.get_renderer()
+        if renderer is not None:
             merged_gp = _merge_gpar(state.get_gpar(), x.gp)
-            _render_grob(x, ax, gp=merged_gp)
+            _render_grob(x, renderer, gp=merged_gp)
 
         # Draw children in order
         for child_name in x._children_order:
@@ -739,12 +559,16 @@ def grid_draw(
 def grid_newpage(
     recording: bool = True,
     clear_dl: bool = True,
+    width: float = 7.0,
+    height: float = 5.0,
+    dpi: float = 150.0,
+    bg: Any = "white",
 ) -> None:
-    """Clear the figure and start a fresh page.
+    """Clear the surface and start a fresh page.
 
-    This is equivalent to R's ``grid.newpage()``.  If no matplotlib figure
-    currently exists, a new one is created.  The viewport stack is reset to
-    the root viewport.
+    This is equivalent to R's ``grid.newpage()``.  If no
+    :class:`CairoRenderer` currently exists, a new one is created.
+    The viewport stack is reset to the root viewport.
 
     Parameters
     ----------
@@ -753,37 +577,31 @@ def grid_newpage(
         new operations.
     clear_dl : bool, optional
         If ``True`` (default) the existing display list is cleared.
-
-    Notes
-    -----
-    High-level plotting functions should call this.  If you write a function
-    that calls ``grid_newpage``, provide an argument to let users turn it off
-    so they can draw into a parent viewport instead of starting a new page.
+    width : float, optional
+        Device width in inches (default 7.0).
+    height : float, optional
+        Device height in inches (default 5.0).
+    dpi : float, optional
+        Resolution in dots per inch (default 150).
+    bg : str or tuple, optional
+        Background colour (default ``"white"``).
     """
-    import matplotlib.pyplot as plt
+    from .renderer import CairoRenderer
 
     state = get_state()
 
     # Reset all state (viewport tree, gpar stack, display list)
     state.reset()
 
-    # Obtain or create a matplotlib figure
-    fig, ax = state.get_device()
-    if fig is None:
-        fig, ax = plt.subplots(1, 1)
-        # Set up a unit-square axes spanning the full figure
-        ax.set_xlim(0, 1)
-        ax.set_ylim(0, 1)
-        ax.set_aspect("auto")
-        ax.axis("off")
-        state.init_device(fig, ax)
+    # Obtain or create a renderer
+    renderer = state.get_renderer()
+    if renderer is None:
+        renderer = CairoRenderer(
+            width=width, height=height, dpi=dpi, bg=bg,
+        )
+        state.init_device(renderer)
     else:
-        # Clear the existing axes
-        ax.cla()
-        ax.set_xlim(0, 1)
-        ax.set_ylim(0, 1)
-        ax.set_aspect("auto")
-        ax.axis("off")
+        renderer.new_page(bg=bg)
 
     if clear_dl:
         dl = state.get_display_list()
@@ -1014,50 +832,25 @@ def grid_locator(
 ) -> Optional[Dict[str, float]]:
     """Interactive point selection on the current device.
 
-    Equivalent to R's ``grid.locator()``.  In this Python port the function
-    is a stub that uses ``matplotlib.pyplot.ginput`` when running in an
-    interactive backend; otherwise it returns ``None``.
+    Equivalent to R's ``grid.locator()``.  The Cairo renderer does not
+    support interactive point selection; this function always returns
+    ``None``.
 
     Parameters
     ----------
     unit : str, optional
         The unit in which to return coordinates (default ``"native"``).
-        Currently the raw device coordinates are returned regardless of
-        *unit*; full unit conversion is a future enhancement.
 
     Returns
     -------
-    dict[str, float] or None
-        A dictionary ``{"x": ..., "y": ...}`` with the selected point's
-        coordinates, or ``None`` if no point was selected or the backend
-        is non-interactive.
+    None
+        Always ``None`` (interactive selection not supported).
     """
-    import matplotlib
-    import matplotlib.pyplot as plt
-
-    state = get_state()
-    fig, ax = state.get_device()
-
-    if fig is None:
-        warnings.warn("grid_locator: no device available", stacklevel=2)
-        return None
-
-    backend = matplotlib.get_backend().lower()
-    if "agg" in backend and "qt" not in backend and "tk" not in backend:
-        # Non-interactive backend
-        warnings.warn(
-            "grid_locator: interactive point selection is not available "
-            f"with the '{matplotlib.get_backend()}' backend",
-            stacklevel=2,
-        )
-        return None
-
-    try:
-        pts = fig.ginput(n=1, timeout=0)
-        if pts:
-            return {"x": pts[0][0], "y": pts[0][1]}
-    except Exception:
-        pass
+    warnings.warn(
+        "grid_locator: interactive point selection is not supported "
+        "with the Cairo renderer",
+        stacklevel=2,
+    )
     return None
 
 

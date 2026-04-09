@@ -3,7 +3,7 @@ grid_py — Python port of the R grid graphics package.
 
 Provides a complete reimplementation of R's grid graphics system including
 units, viewports, grobs (graphical objects), layouts, and rendering via
-matplotlib.
+Cairo (pycairo).
 """
 
 __version__ = "0.1.0"
@@ -123,6 +123,9 @@ from grid_py._group import (
     define_grob, grid_define,
     use_grob, grid_use,
 )
+
+# --- Renderer ---
+from grid_py.renderer import CairoRenderer
 
 # --- Drawing ---
 from grid_py._draw import (

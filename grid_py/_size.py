@@ -1,13 +1,13 @@
 """Size and metric computation for grid_py (port of R's grid ``size.R``).
 
 This module provides functions for computing grob dimensions (width, height,
-ascent, descent) and text string metrics using matplotlib font metrics.
+ascent, descent) and text string metrics using Cairo's font engine.
 These mirror the ``widthDetails``, ``heightDetails``, ``xDetails``,
 ``yDetails``, ``ascentDetails``, and ``descentDetails`` generics in R's
 grid package.
 
-The ``calc_string_metric`` function measures text using matplotlib's font
-engine and returns ascent, descent, and width in inches.  The ``grob_*``
+The ``calc_string_metric`` function measures text using Cairo's FreeType-backed
+font engine and returns ascent, descent, and width in inches.  The ``grob_*``
 helpers create :class:`Unit` objects whose unit type references a grob,
 paralleling R's ``"grobwidth"``, ``"grobheight"``, etc. unit family.
 """
@@ -16,9 +16,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, Optional, Union
 
-import matplotlib.font_manager as fm
-import matplotlib.textpath as textpath
-from matplotlib.font_manager import FontProperties
+import cairo
 
 from ._gpar import Gpar
 from ._units import Unit
@@ -42,56 +40,77 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# Font property helpers
+# Cairo font helpers
 # ---------------------------------------------------------------------------
 
+# Shared measurement surface (tiny ImageSurface; never written to file).
+_MEASURE_SURFACE: Optional[cairo.ImageSurface] = None
+_MEASURE_CTX: Optional[cairo.Context] = None
 
-def _font_properties_from_gpar(gp: Optional[Gpar] = None) -> FontProperties:
-    """Build a matplotlib ``FontProperties`` from a :class:`Gpar`.
+
+def _get_measure_ctx() -> cairo.Context:
+    """Return a Cairo context used solely for text measurement."""
+    global _MEASURE_SURFACE, _MEASURE_CTX
+    if _MEASURE_CTX is None:
+        _MEASURE_SURFACE = cairo.ImageSurface(cairo.FORMAT_ARGB32, 1, 1)
+        _MEASURE_CTX = cairo.Context(_MEASURE_SURFACE)
+    return _MEASURE_CTX
+
+
+def _apply_font_from_gpar(
+    ctx: cairo.Context,
+    gp: Optional[Gpar] = None,
+) -> float:
+    """Configure *ctx*'s font from a :class:`Gpar` and return the font size
+    in **points**.
 
     Parameters
     ----------
+    ctx : cairo.Context
+        The Cairo context to configure.
     gp : Gpar or None
-        Graphical parameters.  If ``None``, matplotlib defaults are used.
+        Graphical parameters.  If ``None``, defaults (sans-serif, 12 pt)
+        are used.
 
     Returns
     -------
-    FontProperties
-        A matplotlib font-properties object suitable for text measurement.
+    float
+        The resolved font size in points.
     """
-    kwargs: Dict[str, Any] = {}
+    family = "sans-serif"
+    slant = cairo.FONT_SLANT_NORMAL
+    weight = cairo.FONT_WEIGHT_NORMAL
+    fontsize = 12.0  # points
+
     if gp is not None:
-        family = getattr(gp, "fontfamily", None)
-        if family is not None:
-            val = family[0] if isinstance(family, (list, tuple)) else family
-            kwargs["family"] = val
+        ff = gp.get("fontfamily", None)
+        if ff is not None:
+            family = str(ff[0] if isinstance(ff, (list, tuple)) else ff)
 
-        fontsize = getattr(gp, "fontsize", None)
-        if fontsize is not None:
-            val = fontsize[0] if isinstance(fontsize, (list, tuple)) else fontsize
-            kwargs["size"] = float(val)
+        fs = gp.get("fontsize", None)
+        if fs is not None:
+            fontsize = float(fs[0] if isinstance(fs, (list, tuple)) else fs)
 
-        fontface = getattr(gp, "fontface", None)
-        if fontface is not None:
-            val = fontface[0] if isinstance(fontface, (list, tuple)) else fontface
+        cex = gp.get("cex", None)
+        if cex is not None:
+            fontsize *= float(cex[0] if isinstance(cex, (list, tuple)) else cex)
+
+        face = gp.get("fontface", None)
+        if face is not None:
+            val = face[0] if isinstance(face, (list, tuple)) else face
             if isinstance(val, str):
-                if "bold" in val and "italic" in val:
-                    kwargs["weight"] = "bold"
-                    kwargs["style"] = "italic"
-                elif "bold" in val:
-                    kwargs["weight"] = "bold"
-                elif "italic" in val or "oblique" in val:
-                    kwargs["style"] = "italic"
-            elif isinstance(val, int):
-                if val == 2:
-                    kwargs["weight"] = "bold"
-                elif val == 3:
-                    kwargs["style"] = "italic"
-                elif val == 4:
-                    kwargs["weight"] = "bold"
-                    kwargs["style"] = "italic"
+                val = val.lower()
+            if val in (2, "bold"):
+                weight = cairo.FONT_WEIGHT_BOLD
+            elif val in (3, "italic", "oblique"):
+                slant = cairo.FONT_SLANT_ITALIC
+            elif val in (4, "bold.italic"):
+                weight = cairo.FONT_WEIGHT_BOLD
+                slant = cairo.FONT_SLANT_ITALIC
 
-    return FontProperties(**kwargs)
+    ctx.select_font_face(family, slant, weight)
+    ctx.set_font_size(fontsize)  # in points (measurement context has no scaling)
+    return fontsize
 
 
 # ---------------------------------------------------------------------------
@@ -105,8 +124,8 @@ def calc_string_metric(
 ) -> Dict[str, float]:
     """Compute text metrics (ascent, descent, width) in inches.
 
-    Uses matplotlib's font engine to measure the given *text* string with
-    the font described by *gp*.
+    Uses Cairo's FreeType-backed font engine to measure the given *text*
+    string with the font described by *gp*.
 
     Parameters
     ----------
@@ -114,7 +133,7 @@ def calc_string_metric(
         The string to measure.
     gp : Gpar or None, optional
         Graphical parameters controlling the font family, size, and style.
-        When ``None``, matplotlib's default font at 12 pt is used.
+        When ``None``, Cairo defaults (sans-serif, 12 pt) are used.
 
     Returns
     -------
@@ -128,22 +147,18 @@ def calc_string_metric(
     >>> sorted(m.keys())
     ['ascent', 'descent', 'width']
     """
-    fp = _font_properties_from_gpar(gp)
-    fontsize = fp.get_size_in_points()  # in points
+    ctx = _get_measure_ctx()
+    _apply_font_from_gpar(ctx, gp)
 
-    # Use matplotlib's text-path engine to get the exact text extent.
-    # ``get_text_width_height_descent`` returns (width, height, descent) in
-    # points when ``renderer=None`` (uses the built-in Agg path).
-    tp = textpath.TextPath((0, 0), text, size=fontsize, prop=fp)
-    bb = tp.get_extents()
+    # font_extents: (ascent, descent, height, max_x_advance, max_y_advance)
+    fe = ctx.font_extents()
+    # text_extents: (x_bearing, y_bearing, width, height, x_advance, y_advance)
+    te = ctx.text_extents(text)
 
-    # ``bb`` is a Bbox in display units (points).  Convert to inches.
     pts_per_inch = 72.0
-    width = bb.width / pts_per_inch
-    height = bb.height / pts_per_inch
-    descent_pts = -bb.y0 if bb.y0 < 0 else 0.0
-    descent = descent_pts / pts_per_inch
-    ascent = height - descent
+    ascent = fe[0] / pts_per_inch
+    descent = fe[1] / pts_per_inch
+    width = te[4] / pts_per_inch  # x_advance
 
     return {"ascent": ascent, "descent": descent, "width": width}
 

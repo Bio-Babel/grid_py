@@ -2,8 +2,8 @@
 
 This module provides the :class:`GridState` singleton that manages the
 viewport tree, display list, graphical-parameter inheritance stack, and
-the binding to a matplotlib ``Figure``/``Axes`` pair.  It replaces the
-C-level ``GridState`` struct found in R's *grid* package.
+the binding to a :class:`CairoRenderer`.  It replaces the C-level
+``GridState`` struct found in R's *grid* package.
 
 .. note::
    Viewport classes are **not** imported here to avoid circular
@@ -152,7 +152,7 @@ class GridState:
     """Singleton holding the global grid graphics state.
 
     Manages the viewport tree, display list, graphical-parameter
-    inheritance stack, and the connection to a matplotlib device
+    inheritance stack, and the connection to a Cairo renderer
     (``Figure`` / ``Axes``).
 
     Attributes
@@ -171,10 +171,8 @@ class GridState:
         Device width in centimetres.
     _device_height_cm : float
         Device height in centimetres.
-    _figure : Optional[Any]
-        Matplotlib ``Figure`` reference (or ``None``).
-    _axes : Optional[Any]
-        Matplotlib ``Axes`` reference (or ``None``).
+    _renderer : Optional[Any]
+        :class:`CairoRenderer` reference (or ``None``).
 
     Examples
     --------
@@ -211,8 +209,7 @@ class GridState:
         self._gpar_stack: List[Gpar] = [Gpar()]
         self._device_width_cm: float = _DEFAULT_DEVICE_WIDTH_CM
         self._device_height_cm: float = _DEFAULT_DEVICE_HEIGHT_CM
-        self._figure: Optional[Any] = None
-        self._axes: Optional[Any] = None
+        self._renderer: Optional[Any] = None
 
     # ---- reset ------------------------------------------------------------
 
@@ -529,39 +526,44 @@ class GridState:
 
     def init_device(
         self,
-        fig: Any,
-        ax: Any,
+        renderer: Any,
         width_cm: float = _DEFAULT_DEVICE_WIDTH_CM,
         height_cm: float = _DEFAULT_DEVICE_HEIGHT_CM,
     ) -> None:
-        """Bind the state to a matplotlib ``Figure`` and ``Axes``.
+        """Bind the state to a :class:`CairoRenderer`.
 
         Parameters
         ----------
-        fig : matplotlib.figure.Figure
-            The matplotlib figure.
-        ax : matplotlib.axes.Axes
-            The matplotlib axes.
+        renderer : CairoRenderer
+            The Cairo renderer instance.
         width_cm : float, optional
             Device width in centimetres (default ~7 in).
         height_cm : float, optional
             Device height in centimetres (default ~7 in).
         """
-        self._figure = fig
-        self._axes = ax
+        self._renderer = renderer
         self._device_width_cm = float(width_cm)
         self._device_height_cm = float(height_cm)
 
-    def get_device(self) -> Tuple[Any, Any]:
-        """Return the matplotlib ``(Figure, Axes)`` tuple.
+    def get_renderer(self) -> Any:
+        """Return the current :class:`CairoRenderer`.
 
         Returns
         -------
-        tuple[Any, Any]
-            ``(fig, ax)`` — either may be ``None`` if
-            :meth:`init_device` has not yet been called.
+        CairoRenderer or None
+            The renderer, or ``None`` if :meth:`init_device` has not
+            been called.
         """
-        return (self._figure, self._axes)
+        return self._renderer
+
+    def get_device(self) -> Tuple[Any, Any]:
+        """Backward-compatible accessor.
+
+        Returns ``(renderer, renderer)`` so that code using
+        ``fig, ax = state.get_device()`` still works during the
+        transition.  Both elements are the renderer (or ``None``).
+        """
+        return (self._renderer, self._renderer)
 
 
 # ---------------------------------------------------------------------------

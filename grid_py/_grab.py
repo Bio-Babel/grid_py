@@ -363,9 +363,8 @@ def grid_revert(
 def grid_cap(native: bool = True) -> Optional[np.ndarray]:
     """Capture the current display as a raster image.
 
-    This attempts to rasterise the current scene.  In the Python port this
-    relies on a matplotlib backend (if one is available).  This is the
-    Python equivalent of R's ``grid.cap()``.
+    This attempts to rasterise the current scene using the Cairo renderer.
+    This is the Python equivalent of R's ``grid.cap()``.
 
     Parameters
     ----------
@@ -377,32 +376,49 @@ def grid_cap(native: bool = True) -> Optional[np.ndarray]:
     Returns
     -------
     numpy.ndarray or None
-        The raster image, or ``None`` if no rendering backend is available.
+        The raster image, or ``None`` if no renderer is available.
     """
     state = get_state()
+    renderer = state.get_renderer()
 
-    # Attempt to get a matplotlib figure from the state
-    fig = getattr(state, "_figure", None)
-    if fig is None:
-        fig = getattr(state, "figure", None)
-
-    if fig is None:
+    if renderer is None:
         warnings.warn(
-            "no rendering backend available for grid_cap; returning None",
+            "no renderer available for grid_cap; returning None",
             stacklevel=2,
         )
         return None
 
     try:
-        fig.canvas.draw()
-        buf = fig.canvas.buffer_rgba()
-        arr = np.asarray(buf, dtype=np.uint8).copy()
+        import io
+        png_bytes = renderer.to_png_bytes()
+        # Decode PNG bytes to RGBA array
+        try:
+            from PIL import Image
+            img = Image.open(io.BytesIO(png_bytes)).convert("RGBA")
+            arr = np.asarray(img, dtype=np.uint8).copy()
+        except ImportError:
+            # Fallback: read directly from Cairo surface if ImageSurface
+            import cairo
+            surface = renderer._surface
+            if isinstance(surface, cairo.ImageSurface):
+                w = surface.get_width()
+                h = surface.get_height()
+                buf = surface.get_data()
+                arr = np.frombuffer(bytes(buf), dtype=np.uint8).reshape(h, w, 4).copy()
+                # Cairo is BGRA; convert to RGBA
+                arr[:, :, [0, 2]] = arr[:, :, [2, 0]]
+            else:
+                warnings.warn(
+                    "grid_cap requires Pillow for non-image surfaces",
+                    stacklevel=2,
+                )
+                return None
         if not native:
             arr = arr.astype(np.float64) / 255.0
         return arr
     except Exception:
         warnings.warn(
-            "failed to capture raster from rendering backend; returning None",
+            "failed to capture raster from renderer; returning None",
             stacklevel=2,
         )
         return None

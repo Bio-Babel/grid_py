@@ -318,6 +318,18 @@ class Gpar:
         """
         return self._params.get(name, default)
 
+    def set(self, name: str, value: Any) -> None:
+        """Set a single parameter value.
+
+        Parameters
+        ----------
+        name : str
+            Parameter name.
+        value : object
+            The value to set.
+        """
+        self._params[name] = value
+
     def __contains__(self, name: str) -> bool:
         return name in self._params
 
