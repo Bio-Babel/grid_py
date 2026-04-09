@@ -14,12 +14,6 @@ pip install -e ".[dev]"
 import grid_py
 ```
 
-## R Version Mapping
-
-| Python | R |
-|---|---|
-| 0.1.0 | (initial port) |
-
 ## Documentation
 
 ```bash
