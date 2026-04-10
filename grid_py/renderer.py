@@ -483,7 +483,10 @@ class CairoRenderer:
             return (1.0, 1.0, 1.0, 1.0)
         fill = gp.get("fill", None)
         fill_val = fill[0] if isinstance(fill, (list, tuple)) else fill
-        rgba = _parse_colour(fill_val if fill is not None else "white")
+        # R semantics: fill=NA (None) means "no fill" → transparent
+        if fill_val is None:
+            return (0.0, 0.0, 0.0, 0.0)
+        rgba = _parse_colour(fill_val)
 
         alpha = gp.get("alpha", None)
         if alpha is not None:
