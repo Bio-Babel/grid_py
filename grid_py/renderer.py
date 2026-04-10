@@ -335,30 +335,57 @@ class CairoRenderer:
         }
 
     def _resolve_sizes(self, unit_obj: Any, n: int, total: float) -> list:
-        """Resolve a Unit vector to device sizes, distributing null units."""
+        """Resolve a Unit vector to device sizes, distributing null units.
+
+        Mirrors R's grid unit resolution: absolute units (cm, inches, pt,
+        etc.) are converted to device pixels first; the remaining space is
+        then distributed among ``"null"`` units proportionally.
+        """
         if unit_obj is None:
             return [total / n] * n
 
-        from ._units import Unit
+        from ._units import Unit, _INCHES_PER
         if not isinstance(unit_obj, Unit):
             return [total / n] * n
 
         vals = unit_obj._values
-        types = unit_obj._types if hasattr(unit_obj, "_types") else ["null"] * len(vals)
+        types = (unit_obj._units
+                 if hasattr(unit_obj, "_units")
+                 else getattr(unit_obj, "_types", ["null"] * len(vals)))
 
-        # For null units, distribute proportionally
-        total_null = sum(v for v, t in zip(vals, types) if t == "null")
-        if total_null == 0:
-            total_null = 1.0
+        # --- Pass 1: resolve absolute units to device pixels ---------------
+        dpi = getattr(self, "dpi", 150.0)
+        abs_sizes = {}  # index → device pixels
+        abs_total = 0.0
+        null_total = 0.0
+
+        for i, (v, t) in enumerate(zip(vals, types)):
+            if t == "npc":
+                px = float(v) * total
+                abs_sizes[i] = px
+                abs_total += px
+            elif t in _INCHES_PER:
+                # absolute unit → inches → device pixels
+                px = float(v) * _INCHES_PER[t] * dpi
+                abs_sizes[i] = px
+                abs_total += px
+            elif t == "null":
+                null_total += float(v)
+            else:
+                # Unknown type: treat as null
+                null_total += float(v)
+
+        # --- Pass 2: distribute remaining space among null units -----------
+        remaining = max(total - abs_total, 0.0)
+        if null_total == 0:
+            null_total = 1.0
 
         sizes = []
-        for v, t in zip(vals, types):
-            if t == "null":
-                sizes.append(float(v) / total_null * total)
-            elif t == "npc":
-                sizes.append(float(v) * total)
+        for i, (v, t) in enumerate(zip(vals, types)):
+            if i in abs_sizes:
+                sizes.append(abs_sizes[i])
             else:
-                sizes.append(float(v) / total_null * total)
+                sizes.append(float(v) / null_total * remaining)
         return sizes
 
     # ---- coordinate helpers ------------------------------------------------
@@ -404,7 +431,10 @@ class CairoRenderer:
 
         col = gp.get("col", None)
         col_val = col[0] if isinstance(col, (list, tuple)) else col
-        rgba = _parse_colour(col_val if col is not None else "black")
+        # R semantics: col=NA (None) means "no border" → transparent
+        if col_val is None:
+            return (0.0, 0.0, 0.0, 0.0)
+        rgba = _parse_colour(col_val)
 
         alpha = gp.get("alpha", None)
         if alpha is not None:
@@ -415,6 +445,9 @@ class CairoRenderer:
 
         lwd = gp.get("lwd", None)
         lw = float((lwd[0] if isinstance(lwd, (list, tuple)) else lwd) if lwd is not None else 1.0)
+        # R semantics: lwd=0 means invisible line
+        if lw <= 0:
+            return (0.0, 0.0, 0.0, 0.0)
         ctx.set_line_width(lw)
 
         lty = gp.get("lty", None)
