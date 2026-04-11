@@ -282,14 +282,25 @@ def _render_grob(
 
     # ---- rastergrob ------------------------------------------------------
     elif cls == "rastergrob":
-        image = getattr(grob, "image", None)
+        image = getattr(grob, "raster", None)
+        if image is None:
+            image = getattr(grob, "image", None)
         if image is not None:
+            # Apply justification (same as rect_grob)
+            hj, vj = _resolve_just(grob)
+            raw_x = _unit_to_float(getattr(grob, "x", 0.0))
+            raw_y = _unit_to_float(getattr(grob, "y", 0.0))
+            raw_w = _unit_to_float(getattr(grob, "width", 1.0))
+            raw_h = _unit_to_float(getattr(grob, "height", 1.0))
+            # Compute bottom-left corner from anchor + justification
+            x0 = raw_x - raw_w * hj
+            y0 = raw_y - raw_h * vj
             renderer.draw_raster(
                 image=image,
-                x=_unit_to_float(getattr(grob, "x", 0.0)),
-                y=_unit_to_float(getattr(grob, "y", 0.0)),
-                w=_unit_to_float(getattr(grob, "width", 1.0)),
-                h=_unit_to_float(getattr(grob, "height", 1.0)),
+                x=x0,
+                y=y0,
+                w=raw_w,
+                h=raw_h,
                 interpolate=getattr(grob, "interpolate", True),
             )
 
@@ -933,29 +944,101 @@ def grid_dl_apply(
 
 def grid_locator(
     unit: str = "native",
+    x_device: Optional[float] = None,
+    y_device: Optional[float] = None,
 ) -> Optional[Dict[str, float]]:
-    """Interactive point selection on the current device.
+    """Convert device coordinates to grid coordinates in the current viewport.
 
-    Equivalent to R's ``grid.locator()``.  The Cairo renderer does not
-    support interactive point selection; this function always returns
-    ``None``.
+    Equivalent to R's ``grid.locator(unit)``.  In R, the function waits
+    for a mouse click on an interactive device.  In Python, since we use
+    file-based Cairo rendering, device coordinates are passed explicitly
+    via *x_device* and *y_device*.
+
+    The conversion uses the current viewport's coordinate transform,
+    matching R's approach of applying ``solve(current.transform())``
+    to the raw device coordinates.
+
+    Mirrors ``grid.locator`` in R (``grid/R/interactive.R``).
 
     Parameters
     ----------
     unit : str, optional
-        The unit in which to return coordinates (default ``"native"``).
+        Target unit for the returned coordinates (default ``"native"``).
+        Common values: ``"native"``, ``"npc"``, ``"cm"``, ``"inches"``,
+        ``"points"``.
+    x_device : float or None
+        X coordinate in device pixels (0 = left edge).
+    y_device : float or None
+        Y coordinate in device pixels (0 = top edge).
 
     Returns
     -------
-    None
-        Always ``None`` (interactive selection not supported).
+    dict or None
+        ``{"x": <value>, "y": <value>}`` in the requested unit,
+        or ``None`` if coordinates are not provided.
+
+    Examples
+    --------
+    >>> grid_locator("npc", x_device=200, y_device=150)
+    {"x": 0.45, "y": 0.62}
     """
-    warnings.warn(
-        "grid_locator: interactive point selection is not supported "
-        "with the Cairo renderer",
-        stacklevel=2,
-    )
-    return None
+    if x_device is None or y_device is None:
+        import warnings
+        warnings.warn(
+            "grid.locator() is not supported in non-interactive mode; "
+            "pass x_device and y_device explicitly.",
+            stacklevel=2,
+        )
+        return None
+
+    state = get_state()
+    renderer = state.get_renderer()
+    if renderer is None:
+        return None
+
+    # Current viewport bounds in device coords: (x0, y0, pw, ph)
+    x0, y0, pw, ph = renderer._vp_stack[-1]
+    if pw == 0 or ph == 0:
+        return None
+
+    # Device coords → NPC within current viewport
+    # _x(npc) = x0 + npc * pw   → npc = (x_device - x0) / pw
+    # _y(npc) = y0 + (1-npc)*ph → npc = 1 - (y_device - y0) / ph
+    npc_x = (float(x_device) - x0) / pw
+    npc_y = 1.0 - (float(y_device) - y0) / ph
+
+    if unit == "npc":
+        return {"x": npc_x, "y": npc_y}
+
+    # NPC → inches (via viewport device size and DPI)
+    x_inches = npc_x * pw / renderer.dpi
+    y_inches = npc_y * ph / renderer.dpi
+
+    if unit == "inches":
+        return {"x": x_inches, "y": y_inches}
+    elif unit == "cm":
+        return {"x": x_inches * 2.54, "y": y_inches * 2.54}
+    elif unit == "mm":
+        return {"x": x_inches * 25.4, "y": y_inches * 25.4}
+    elif unit in ("points", "pt"):
+        return {"x": x_inches * 72.0, "y": y_inches * 72.0}
+    elif unit == "native":
+        vp = state.current_viewport()
+        if vp is not None:
+            xscale = getattr(vp, "xscale", [0, 1])
+            yscale = getattr(vp, "yscale", [0, 1])
+            if hasattr(xscale, '__len__') and len(xscale) >= 2:
+                x_native = xscale[0] + npc_x * (xscale[1] - xscale[0])
+            else:
+                x_native = npc_x
+            if hasattr(yscale, '__len__') and len(yscale) >= 2:
+                y_native = yscale[0] + npc_y * (yscale[1] - yscale[0])
+            else:
+                y_native = npc_y
+            return {"x": x_native, "y": y_native}
+        return {"x": npc_x, "y": npc_y}
+    else:
+        return {"x": npc_x, "y": npc_y}
 
 
 def grid_pretty(
