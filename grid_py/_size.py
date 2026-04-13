@@ -287,6 +287,355 @@ def _rect_height_details(grob: Any) -> Unit:
     return Unit(1, "npc")
 
 
+# -- coordinate-based bounding box helpers ----------------------------------
+#
+# R uses C_locnBounds (for lines, points, polygon, polyline, segments)
+# and C_circleBounds (for circles).  Both resolve all coordinates to
+# inches in the current viewport context, then compute min/max.
+#
+# In grid_py we achieve the same by obtaining the active renderer
+# and calling ``renderer._resolve_to_npc()`` on each coordinate.
+
+
+def _get_renderer() -> Any:
+    """Return the active CairoRenderer, or ``None``."""
+    try:
+        from ._state import get_state
+        state = get_state()
+        return state.get_renderer() if hasattr(state, "get_renderer") else None
+    except Exception:
+        return None
+
+
+def _locn_bounds_width(x_unit: Any, renderer: Any, gp: Any = None) -> float:
+    """Compute the width (in inches) of a set of x-coordinates.
+
+    Mirrors R ``C_locnBounds`` returning ``bounds[3]`` (width).
+    """
+    from ._units import Unit
+    if not isinstance(x_unit, Unit) or len(x_unit) == 0:
+        return 0.0
+
+    npc_vals = []
+    for i in range(len(x_unit)):
+        elem = Unit(x_unit._values[i], x_unit._units[i], data=x_unit._data[i])
+        npc_vals.append(renderer._resolve_to_npc(elem, axis="x", is_dim=False, gp=gp))
+
+    if not npc_vals:
+        return 0.0
+    npc_width = max(npc_vals) - min(npc_vals)
+    # Convert NPC width to inches
+    vp_px = renderer._vp_stack[-1][2]  # pw
+    return npc_width * vp_px / renderer.dpi
+
+
+def _locn_bounds_height(y_unit: Any, renderer: Any, gp: Any = None) -> float:
+    """Compute the height (in inches) of a set of y-coordinates.
+
+    Mirrors R ``C_locnBounds`` returning ``bounds[4]`` (height).
+    """
+    from ._units import Unit
+    if not isinstance(y_unit, Unit) or len(y_unit) == 0:
+        return 0.0
+
+    npc_vals = []
+    for i in range(len(y_unit)):
+        elem = Unit(y_unit._values[i], y_unit._units[i], data=y_unit._data[i])
+        npc_vals.append(renderer._resolve_to_npc(elem, axis="y", is_dim=False, gp=gp))
+
+    if not npc_vals:
+        return 0.0
+    npc_height = max(npc_vals) - min(npc_vals)
+    vp_px = renderer._vp_stack[-1][3]  # ph
+    return npc_height * vp_px / renderer.dpi
+
+
+# -- lines grob (R: primitives.R:186-200, uses C_locnBounds) ---------------
+
+def _lines_width_details(grob: Any) -> Unit:
+    """Width of a lines/polyline grob: bounding box of x-coordinates.
+
+    Mirrors ``widthDetails.lines`` (R ``primitives.R:186``).
+    """
+    renderer = _get_renderer()
+    if renderer is None:
+        return Unit(0, "inches")
+    x_unit = getattr(grob, "x", None)
+    gp = getattr(grob, "gp", None)
+    return Unit(_locn_bounds_width(x_unit, renderer, gp), "inches")
+
+
+def _lines_height_details(grob: Any) -> Unit:
+    """Height of a lines/polyline grob.
+
+    Mirrors ``heightDetails.lines`` (R ``primitives.R:194``).
+    """
+    renderer = _get_renderer()
+    if renderer is None:
+        return Unit(0, "inches")
+    y_unit = getattr(grob, "y", None)
+    gp = getattr(grob, "gp", None)
+    return Unit(_locn_bounds_height(y_unit, renderer, gp), "inches")
+
+
+# -- points grob (R: primitives.R:1546-1560, uses C_locnBounds) ------------
+
+def _points_width_details(grob: Any) -> Unit:
+    """Width of a points grob: bounding box of x-coordinates.
+
+    Mirrors ``widthDetails.points`` (R ``primitives.R:1546``).
+    """
+    renderer = _get_renderer()
+    if renderer is None:
+        return Unit(0, "inches")
+    x_unit = getattr(grob, "x", None)
+    gp = getattr(grob, "gp", None)
+    return Unit(_locn_bounds_width(x_unit, renderer, gp), "inches")
+
+
+def _points_height_details(grob: Any) -> Unit:
+    """Height of a points grob.
+
+    Mirrors ``heightDetails.points`` (R ``primitives.R:1554``).
+    """
+    renderer = _get_renderer()
+    if renderer is None:
+        return Unit(0, "inches")
+    y_unit = getattr(grob, "y", None)
+    gp = getattr(grob, "gp", None)
+    return Unit(_locn_bounds_height(y_unit, renderer, gp), "inches")
+
+
+# -- polygon grob (R: primitives.R:607-621, uses C_locnBounds) -------------
+
+def _polygon_width_details(grob: Any) -> Unit:
+    """Width of a polygon grob.
+
+    Mirrors ``widthDetails.polygon`` (R ``primitives.R:607``).
+    """
+    renderer = _get_renderer()
+    if renderer is None:
+        return Unit(0, "inches")
+    x_unit = getattr(grob, "x", None)
+    gp = getattr(grob, "gp", None)
+    return Unit(_locn_bounds_width(x_unit, renderer, gp), "inches")
+
+
+def _polygon_height_details(grob: Any) -> Unit:
+    """Height of a polygon grob.
+
+    Mirrors ``heightDetails.polygon`` (R ``primitives.R:615``).
+    """
+    renderer = _get_renderer()
+    if renderer is None:
+        return Unit(0, "inches")
+    y_unit = getattr(grob, "y", None)
+    gp = getattr(grob, "gp", None)
+    return Unit(_locn_bounds_height(y_unit, renderer, gp), "inches")
+
+
+# -- segments grob (R: primitives.R:367-381, uses segmentBounds helper) -----
+
+def _segments_width_details(grob: Any) -> Unit:
+    """Width of a segments grob: bounding box of all endpoints.
+
+    Mirrors ``widthDetails.segments`` (R ``primitives.R:367``).
+    R's ``segmentBounds`` concatenates x0,x1 and y0,y1 into single
+    vectors, then calls ``C_locnBounds``.
+    """
+    from ._units import Unit as _Unit, unit_c
+    renderer = _get_renderer()
+    if renderer is None:
+        return Unit(0, "inches")
+    x0 = getattr(grob, "x0", None)
+    x1 = getattr(grob, "x1", None)
+    gp = getattr(grob, "gp", None)
+    if x0 is not None and x1 is not None:
+        if isinstance(x0, _Unit) and isinstance(x1, _Unit):
+            combined_x = unit_c(x0, x1)
+        else:
+            combined_x = x0
+    elif x0 is not None:
+        combined_x = x0
+    elif x1 is not None:
+        combined_x = x1
+    else:
+        return Unit(0, "inches")
+    return Unit(_locn_bounds_width(combined_x, renderer, gp), "inches")
+
+
+def _segments_height_details(grob: Any) -> Unit:
+    """Height of a segments grob.
+
+    Mirrors ``heightDetails.segments`` (R ``primitives.R:375``).
+    """
+    from ._units import Unit as _Unit, unit_c
+    renderer = _get_renderer()
+    if renderer is None:
+        return Unit(0, "inches")
+    y0 = getattr(grob, "y0", None)
+    y1 = getattr(grob, "y1", None)
+    gp = getattr(grob, "gp", None)
+    if y0 is not None and y1 is not None:
+        if isinstance(y0, _Unit) and isinstance(y1, _Unit):
+            combined_y = unit_c(y0, y1)
+        else:
+            combined_y = y0
+    elif y0 is not None:
+        combined_y = y0
+    elif y1 is not None:
+        combined_y = y1
+    else:
+        return Unit(0, "inches")
+    return Unit(_locn_bounds_height(combined_y, renderer, gp), "inches")
+
+
+# -- circle grob (R: primitives.R:1062-1076, uses C_circleBounds) ----------
+
+def _circle_width_details(grob: Any) -> Unit:
+    """Width of a circle grob: bounding box considering radius.
+
+    Mirrors ``widthDetails.circle`` (R ``primitives.R:1062``).
+    R's ``C_circleBounds`` computes ``(max(x+r) - min(x-r))``.
+    """
+    from ._units import Unit as _Unit
+    renderer = _get_renderer()
+    if renderer is None:
+        return Unit(0, "inches")
+
+    x_unit = getattr(grob, "x", None)
+    r_unit = getattr(grob, "r", None)
+    gp = getattr(grob, "gp", None)
+
+    if x_unit is None or not isinstance(x_unit, _Unit):
+        return Unit(0, "inches")
+
+    # Resolve each center and radius to NPC, then compute bounds
+    n = len(x_unit)
+    r_npc_arr = []
+    if r_unit is not None and isinstance(r_unit, _Unit):
+        for i in range(len(r_unit)):
+            elem = _Unit(r_unit._values[i], r_unit._units[i], data=r_unit._data[i])
+            r_npc_arr.append(renderer._resolve_to_npc(elem, axis="x", is_dim=True, gp=gp))
+    if not r_npc_arr:
+        r_npc_arr = [0.0]
+
+    x_npc_arr = []
+    for i in range(n):
+        elem = _Unit(x_unit._values[i], x_unit._units[i], data=x_unit._data[i])
+        x_npc_arr.append(renderer._resolve_to_npc(elem, axis="x", is_dim=False, gp=gp))
+
+    # Compute bounding box with radius
+    max_vals = []
+    min_vals = []
+    for i in range(n):
+        r_npc = r_npc_arr[i % len(r_npc_arr)]
+        max_vals.append(x_npc_arr[i] + r_npc)
+        min_vals.append(x_npc_arr[i] - r_npc)
+
+    npc_width = max(max_vals) - min(min_vals)
+    vp_px = renderer._vp_stack[-1][2]
+    return Unit(npc_width * vp_px / renderer.dpi, "inches")
+
+
+def _circle_height_details(grob: Any) -> Unit:
+    """Height of a circle grob.
+
+    Mirrors ``heightDetails.circle`` (R ``primitives.R:1070``).
+    """
+    from ._units import Unit as _Unit
+    renderer = _get_renderer()
+    if renderer is None:
+        return Unit(0, "inches")
+
+    y_unit = getattr(grob, "y", None)
+    r_unit = getattr(grob, "r", None)
+    gp = getattr(grob, "gp", None)
+
+    if y_unit is None or not isinstance(y_unit, _Unit):
+        return Unit(0, "inches")
+
+    n = len(y_unit)
+    r_npc_arr = []
+    if r_unit is not None and isinstance(r_unit, _Unit):
+        for i in range(len(r_unit)):
+            elem = _Unit(r_unit._values[i], r_unit._units[i], data=r_unit._data[i])
+            r_npc_arr.append(renderer._resolve_to_npc(elem, axis="y", is_dim=True, gp=gp))
+    if not r_npc_arr:
+        r_npc_arr = [0.0]
+
+    y_npc_arr = []
+    for i in range(n):
+        elem = _Unit(y_unit._values[i], y_unit._units[i], data=y_unit._data[i])
+        y_npc_arr.append(renderer._resolve_to_npc(elem, axis="y", is_dim=False, gp=gp))
+
+    max_vals = []
+    min_vals = []
+    for i in range(n):
+        r_npc = r_npc_arr[i % len(r_npc_arr)]
+        max_vals.append(y_npc_arr[i] + r_npc)
+        min_vals.append(y_npc_arr[i] - r_npc)
+
+    npc_height = max(max_vals) - min(min_vals)
+    vp_px = renderer._vp_stack[-1][3]
+    return Unit(npc_height * vp_px / renderer.dpi, "inches")
+
+
+# -- roundrect grob (same as rect: returns own width/height) ----------------
+
+def _roundrect_width_details(grob: Any) -> Unit:
+    """Width of a roundrect grob: its own *width* attribute.
+
+    Mirrors ``widthDetails.roundrect`` — same as rect.
+    """
+    return _rect_width_details(grob)
+
+
+def _roundrect_height_details(grob: Any) -> Unit:
+    """Height of a roundrect grob: its own *height* attribute."""
+    return _rect_height_details(grob)
+
+
+# -- pathgrob (coordinate bounding box, same pattern as polygon) ------------
+
+def _path_width_details(grob: Any) -> Unit:
+    """Width of a path grob: bounding box of x-coordinates.
+
+    Mirrors ``widthDetails.path`` (uses ``C_locnBounds``).
+    """
+    renderer = _get_renderer()
+    if renderer is None:
+        return Unit(0, "inches")
+    x_unit = getattr(grob, "x", None)
+    gp = getattr(grob, "gp", None)
+    return Unit(_locn_bounds_width(x_unit, renderer, gp), "inches")
+
+
+def _path_height_details(grob: Any) -> Unit:
+    """Height of a path grob."""
+    renderer = _get_renderer()
+    if renderer is None:
+        return Unit(0, "inches")
+    y_unit = getattr(grob, "y", None)
+    gp = getattr(grob, "gp", None)
+    return Unit(_locn_bounds_height(y_unit, renderer, gp), "inches")
+
+
+# -- rastergrob (returns own width/height, same as rect) --------------------
+
+def _raster_width_details(grob: Any) -> Unit:
+    """Width of a raster grob: its own *width* attribute.
+
+    Mirrors ``widthDetails.rastergrob``.
+    """
+    return _rect_width_details(grob)
+
+
+def _raster_height_details(grob: Any) -> Unit:
+    """Height of a raster grob: its own *height* attribute."""
+    return _rect_height_details(grob)
+
+
 # ---------------------------------------------------------------------------
 # _grid_class dispatch tables
 # ---------------------------------------------------------------------------
@@ -295,12 +644,30 @@ _WIDTH_DISPATCH: Dict[str, Any] = {
     "text": _text_width_details,
     "null": _null_width_details,
     "rect": _rect_width_details,
+    "roundrect": _roundrect_width_details,
+    "lines": _lines_width_details,
+    "polyline": _lines_width_details,
+    "points": _points_width_details,
+    "polygon": _polygon_width_details,
+    "segments": _segments_width_details,
+    "circle": _circle_width_details,
+    "pathgrob": _path_width_details,
+    "rastergrob": _raster_width_details,
 }
 
 _HEIGHT_DISPATCH: Dict[str, Any] = {
     "text": _text_height_details,
     "null": _null_height_details,
     "rect": _rect_height_details,
+    "roundrect": _roundrect_height_details,
+    "lines": _lines_height_details,
+    "polyline": _lines_height_details,
+    "points": _points_height_details,
+    "polygon": _polygon_height_details,
+    "segments": _segments_height_details,
+    "circle": _circle_height_details,
+    "pathgrob": _path_height_details,
+    "rastergrob": _raster_height_details,
 }
 
 _ASCENT_DISPATCH: Dict[str, Any] = {

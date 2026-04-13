@@ -227,6 +227,50 @@ def _eval_grob_metric(unit_type: str, grob: Any) -> Optional["Unit"]:
     return _dispatch[unit_type](grob)
 
 
+def _try_resolve_with_renderer(
+    x: "Unit",
+    i: int,
+    src_unit: str,
+    target: str,
+    axis: str,
+    type_: str,
+) -> Optional[float]:
+    """Try to resolve a context-dependent unit via the active renderer.
+
+    Returns the converted value in *target* units, or ``None`` if no
+    renderer is available.
+    """
+    try:
+        from ._state import get_state
+        state = get_state()
+        renderer = state.get_renderer() if hasattr(state, "get_renderer") else None
+    except Exception:
+        return None
+
+    if renderer is None or not hasattr(renderer, "_resolve_to_npc"):
+        return None
+
+    # Build a single-element Unit for the source
+    elem = Unit(x._values[i], src_unit, data=x._data[i])
+    is_dim = type_ in ("dimension",)
+
+    # Resolve source → NPC
+    npc_val = renderer._resolve_to_npc(elem, axis=axis, is_dim=is_dim)
+
+    # Convert NPC → target
+    if target == "npc":
+        return npc_val
+    elif target in _ABSOLUTE_UNIT_TYPES:
+        # NPC → inches → target
+        vp_px = renderer._vp_stack[-1][2] if axis == "x" else renderer._vp_stack[-1][3]
+        vp_inches = vp_px / renderer.dpi
+        inches = npc_val * vp_inches
+        return inches / _INCHES_PER[target]
+    else:
+        # Target is also context-dependent — just return the NPC value
+        return npc_val
+
+
 def _resolve_alias(unit_str: str) -> str:
     """Return the canonical unit-type string, resolving common aliases.
 
@@ -1129,8 +1173,9 @@ def convert_unit(
 
     Absolute-to-absolute conversions (e.g. cm to inches) are performed
     immediately.  Context-dependent conversions (involving npc, native,
-    lines, etc.) require a viewport and are currently deferred -- the unit
-    is returned unchanged with a warning when no context is available.
+    lines, etc.) use the active renderer's viewport context when
+    available; otherwise a warning is issued and the unit is returned
+    unchanged.
 
     Parameters
     ----------
@@ -1214,9 +1259,15 @@ def convert_unit(
                 result_vals[i] = x._values[i]
                 converted = False
         else:
-            # Context-dependent conversion -- deferred
-            result_vals[i] = x._values[i]
-            converted = False
+            # Context-dependent: try to resolve via active renderer
+            resolved = _try_resolve_with_renderer(
+                x, i, src_unit, target, axisFrom, typeFrom,
+            )
+            if resolved is not None:
+                result_vals[i] = resolved
+            else:
+                result_vals[i] = x._values[i]
+                converted = False
 
     if valueOnly:
         return result_vals
