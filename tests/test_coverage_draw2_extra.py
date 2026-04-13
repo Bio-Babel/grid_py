@@ -339,8 +339,26 @@ class TestRenderDispatch:
     class CapturingRenderer:
         def __init__(self):
             self.calls = []
+            self.dpi = 100.0
+            self._vp_stack = [(0.0, 0.0, 300.0, 200.0, None)]
 
         def __getattr__(self, name):
+            # Resolve methods must return proper values
+            if name in ("resolve_x", "resolve_y", "resolve_w", "resolve_h"):
+                def resolve_scalar(val, gp=None):
+                    from grid_py._units import Unit
+                    if isinstance(val, Unit):
+                        return float(val._values[0])
+                    return float(val)
+                return resolve_scalar
+            if name.startswith("resolve_") and name.endswith("_array"):
+                def resolve_array(val, gp=None):
+                    import numpy as _np
+                    from grid_py._units import Unit
+                    if isinstance(val, Unit):
+                        return _np.asarray(val._values, dtype=float)
+                    return _np.atleast_1d(_np.asarray(val, dtype=float))
+                return resolve_array
             def method(*args, **kwargs):
                 self.calls.append(name)
             return method

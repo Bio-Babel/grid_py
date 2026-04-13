@@ -314,10 +314,12 @@ class TestNavigation:
         with pytest.raises(ValueError, match="must navigate up"):
             up_viewport(-1)
 
-    def test_up_viewport_returns_none(self):
+    def test_up_viewport_returns_path(self):
         push_viewport(Viewport(name="uv1"))
         result = up_viewport(1)
-        assert result is None
+        # R semantics: returns the path segment navigated (the VP name)
+        assert result is not None
+        assert "uv1" in str(result)
 
     def test_push_up_down(self):
         vp = Viewport(name="child1")

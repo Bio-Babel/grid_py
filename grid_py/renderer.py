@@ -210,15 +210,64 @@ class CairoRenderer:
         self._ctx.set_source_rgba(*bg_rgba)
         self._ctx.paint()
 
-        # Viewport transform stack.  Each entry is (x0, y0, w, h) in
-        # device-unit space.  NPC [0,1] maps to [x0, x0+w] x [y0, y0+h].
+        # Viewport transform stack.  Each entry is
+        # (x0, y0, w, h, vp_obj) in device-unit space.
+        # NPC [0,1] maps to [x0, x0+w] x [y0, y0+h].
+        # vp_obj is the Viewport object (None for the root entry).
         if self._surface_type == "image":
-            self._vp_stack: list = [(0.0, 0.0, float(self._width_px), float(self._height_px))]
+            self._vp_stack: list = [(0.0, 0.0, float(self._width_px), float(self._height_px), None)]
         else:
-            self._vp_stack = [(0.0, 0.0, self.width_in * 72.0, self.height_in * 72.0)]
+            self._vp_stack = [(0.0, 0.0, self.width_in * 72.0, self.height_in * 72.0, None)]
         self._layout_stack: list = []  # GridLayout info stack
         self._layout_depth_stack: list = []  # vp_stack depths at layout pushes
         self._clip_stack: list = []   # Track which viewport pushes had clipping
+        self._path_collecting: bool = False  # True during fill/stroke path build
+
+    # ---- path collection mode (R 4.2+ fill/stroke grobs) -------------------
+
+    def begin_path_collect(self, rule: str = "winding") -> None:
+        """Enter path-collecting mode.
+
+        While active, draw_* methods build the Cairo path without
+        filling or stroking.  Call one of the ``end_path_*`` methods
+        to finalise.
+
+        Mirrors R's ``C_stroke``/``C_fill``/``C_fillStroke`` pattern
+        (``grid/src/path.c``).
+        """
+        self._ctx.new_path()
+        self._path_collecting = True
+        self._ctx.set_fill_rule(
+            cairo.FILL_RULE_EVEN_ODD if rule == "evenodd"
+            else cairo.FILL_RULE_WINDING
+        )
+
+    def end_path_stroke(self, gp: Optional[Any] = None) -> None:
+        """End path collection with stroke only (no fill)."""
+        self._path_collecting = False
+        stroke = self._apply_stroke(gp)
+        if stroke[3] > 0:
+            self._ctx.stroke()
+        else:
+            self._ctx.new_path()
+
+    def end_path_fill(self, gp: Optional[Any] = None) -> None:
+        """End path collection with fill only (no stroke)."""
+        self._path_collecting = False
+        bbox = self._ctx.path_extents()
+        self._apply_fill(gp, bbox=bbox)
+        self._ctx.new_path()
+
+    def end_path_fill_stroke(self, gp: Optional[Any] = None) -> None:
+        """End path collection with fill then stroke."""
+        self._path_collecting = False
+        bbox = self._ctx.path_extents()
+        self._apply_fill(gp, bbox=bbox)
+        stroke = self._apply_stroke(gp)
+        if stroke[3] > 0:
+            self._ctx.stroke()
+        else:
+            self._ctx.new_path()
 
     # ---- viewport management -----------------------------------------------
 
@@ -232,7 +281,7 @@ class CairoRenderer:
         """
         from ._units import Unit
 
-        x0, y0, pw, ph = self._vp_stack[-1]
+        x0, y0, pw, ph, *_vp_rest = self._vp_stack[-1]
 
         layout = getattr(vp, "_layout", None)
         layout_pos_row = getattr(vp, "_layout_pos_row", None)
@@ -243,7 +292,7 @@ class CairoRenderer:
             respect = getattr(layout, "respect", False)
             grid_info = self._compute_grid(
                 layout, pw, ph, respect=bool(respect))
-            self._vp_stack.append((x0, y0, pw, ph))
+            self._vp_stack.append((x0, y0, pw, ph, vp))
             self._layout_stack.append(grid_info)
             self._clip_stack.append(False)
             # Track that this viewport level pushed a layout (for pop)
@@ -273,7 +322,7 @@ class CairoRenderer:
                 cell_w = sum(col_widths[l:r + 1]) if r < len(col_widths) else pw
                 cell_h = sum(row_heights[t:b + 1]) if b < len(row_heights) else ph
 
-                self._vp_stack.append((cell_x0, cell_y0, cell_w, cell_h))
+                self._vp_stack.append((cell_x0, cell_y0, cell_w, cell_h, vp))
                 self._apply_clip(vp, cell_x0, cell_y0, cell_w, cell_h)
                 return
 
@@ -283,10 +332,11 @@ class CairoRenderer:
         vp_w_raw = getattr(vp, "_width", None)
         vp_h_raw = getattr(vp, "_height", None)
 
-        vp_x = float(vp_x_raw._values[0]) if vp_x_raw is not None and hasattr(vp_x_raw, "_values") else 0.5
-        vp_y = float(vp_y_raw._values[0]) if vp_y_raw is not None and hasattr(vp_y_raw, "_values") else 0.5
-        vp_w = float(vp_w_raw._values[0]) if vp_w_raw is not None and hasattr(vp_w_raw, "_values") else 1.0
-        vp_h = float(vp_h_raw._values[0]) if vp_h_raw is not None and hasattr(vp_h_raw, "_values") else 1.0
+        # Resolve units to NPC using the current (parent) viewport context
+        vp_x = self.resolve_x(vp_x_raw) if vp_x_raw is not None else 0.5
+        vp_y = self.resolve_y(vp_y_raw) if vp_y_raw is not None else 0.5
+        vp_w = self.resolve_w(vp_w_raw) if vp_w_raw is not None else 1.0
+        vp_h = self.resolve_h(vp_h_raw) if vp_h_raw is not None else 1.0
 
         just = getattr(vp, "_just", (0.5, 0.5))
         if isinstance(just, (list, tuple)) and len(just) >= 2:
@@ -299,7 +349,7 @@ class CairoRenderer:
         new_x0 = x0 + vp_x * pw - hjust * new_w
         new_y0 = y0 + vp_y * ph - vjust * new_h
 
-        self._vp_stack.append((new_x0, new_y0, new_w, new_h))
+        self._vp_stack.append((new_x0, new_y0, new_w, new_h, vp))
         self._apply_clip(vp, new_x0, new_y0, new_w, new_h)
 
     def _apply_clip(self, vp: Any, x0: float, y0: float, w: float, h: float) -> None:
@@ -330,7 +380,7 @@ class CairoRenderer:
             An ARGB32 surface whose alpha channel is the mask, or
             ``None`` on failure.
         """
-        x0, y0, pw, ph = self._vp_stack[-1]
+        x0, y0, pw, ph, *_vp_rest = self._vp_stack[-1]
         dw = max(int(round(pw)), 1)
         dh = max(int(round(ph)), 1)
 
@@ -340,9 +390,11 @@ class CairoRenderer:
         mask_renderer._ctx = cairo.Context(mask_surface)
         mask_renderer._surface_type = "image"
         mask_renderer.dpi = self.dpi
-        mask_renderer._vp_stack = [(0.0, 0.0, float(dw), float(dh))]
+        mask_renderer._vp_stack = [(0.0, 0.0, float(dw), float(dh), None)]
         mask_renderer._clip_stack = [False]
         mask_renderer._layout_stack = []
+        mask_renderer._layout_depth_stack = []
+        mask_renderer._path_collecting = False
 
         # Clear to transparent
         mask_renderer._ctx.set_source_rgba(0, 0, 0, 0)
@@ -381,7 +433,7 @@ class CairoRenderer:
         mask_type : str
             ``"alpha"`` or ``"luminance"``.
         """
-        x0, y0, pw, ph = self._vp_stack[-1]
+        x0, y0, pw, ph, *_vp_rest = self._vp_stack[-1]
 
         if mask_type == "luminance":
             # Convert luminance to alpha: iterate pixels and set alpha
@@ -412,60 +464,28 @@ class CairoRenderer:
                        respect: bool = False) -> dict:
         """Compute row/column positions for a GridLayout within the parent.
 
-        When *respect* is ``True`` (R: ``gtable(..., respect=TRUE)``),
-        null units are scaled so that 1 null has the same physical size
-        in both dimensions — preserving the aspect ratio encoded in the
-        null-unit values.
+        Delegates to :func:`._layout._calc_layout_sizes` which implements
+        the full three-phase layout algorithm from R ``layout.c``.
         """
-        nrow = getattr(layout, "nrow", 1)
-        ncol = getattr(layout, "ncol", 1)
-        widths = getattr(layout, "widths", None)
-        heights = getattr(layout, "heights", None)
+        from ._layout import _calc_layout_sizes, GridLayout
 
-        if not respect:
-            col_widths = self._resolve_sizes(widths, ncol, parent_w)
-            row_heights = self._resolve_sizes(heights, nrow, parent_h)
+        if isinstance(layout, GridLayout):
+            col_widths, row_heights = _calc_layout_sizes(
+                layout, parent_w, parent_h, self.dpi,
+            )
         else:
-            # Respect mode: null units must have equal physical scale in
-            # both dimensions.  Compute the scale that fits both.
-            col_widths = self._resolve_sizes(widths, ncol, parent_w)
-            row_heights = self._resolve_sizes(heights, nrow, parent_h)
-            # Find null-unit entries and their total
-            from ._units import Unit, _INCHES_PER
-            w_null_total, h_null_total = 0.0, 0.0
-            w_remaining, h_remaining = parent_w, parent_h
-            if isinstance(widths, Unit):
-                for v, t in zip(widths._values, widths._units):
-                    if t in _INCHES_PER:
-                        w_remaining -= float(v) * _INCHES_PER[t] * self.dpi
-                    elif t == "npc":
-                        w_remaining -= float(v) * parent_w
-                    elif t == "null":
-                        w_null_total += float(v)
-                    else:
-                        w_null_total += float(v)
-            if isinstance(heights, Unit):
-                for v, t in zip(heights._values, heights._units):
-                    if t in _INCHES_PER:
-                        h_remaining -= float(v) * _INCHES_PER[t] * self.dpi
-                    elif t == "npc":
-                        h_remaining -= float(v) * parent_h
-                    elif t == "null":
-                        h_null_total += float(v)
-                    else:
-                        h_null_total += float(v)
-            w_remaining = max(w_remaining, 0.0)
-            h_remaining = max(h_remaining, 0.0)
-            if w_null_total > 0 and h_null_total > 0:
-                scale_w = w_remaining / w_null_total
-                scale_h = h_remaining / h_null_total
-                scale = min(scale_w, scale_h)
-                # Re-resolve with unified scale
-                col_widths = self._resolve_sizes_with_scale(
-                    widths, ncol, parent_w, scale)
-                row_heights = self._resolve_sizes_with_scale(
-                    heights, nrow, parent_h, scale)
+            # Fallback for non-GridLayout objects (e.g. plain dicts/mocks)
+            nrow = getattr(layout, "nrow", 1)
+            ncol = getattr(layout, "ncol", 1)
+            col_widths = self._resolve_sizes(
+                getattr(layout, "widths", None), ncol, parent_w,
+            )
+            row_heights = self._resolve_sizes(
+                getattr(layout, "heights", None), nrow, parent_h,
+            )
 
+        ncol = len(col_widths)
+        nrow = len(row_heights)
         col_starts = [sum(col_widths[:i]) for i in range(ncol)]
         row_starts = [sum(row_heights[:i]) for i in range(nrow)]
 
@@ -548,11 +568,279 @@ class CairoRenderer:
                 sizes.append(float(v) / null_total * remaining)
         return sizes
 
+    # ---- unit resolution (mirrors R unit.c:transformLocation/transform) -----
+
+    def _resolve_to_npc(
+        self,
+        unit_obj: Any,
+        axis: str,
+        is_dim: bool,
+        gp: Optional[Any] = None,
+    ) -> float:
+        """Resolve a single :class:`Unit` value to an NPC float.
+
+        Mirrors R's two-phase unit resolution (``unit.c:transformX/Y``):
+        first converts the unit to inches using the current viewport's
+        physical dimensions, then normalises to NPC by dividing by the
+        viewport size in inches.
+
+        Parameters
+        ----------
+        unit_obj : Unit
+            The unit to resolve.
+        axis : ``"x"`` or ``"y"``
+            Which viewport dimension to use as the reference.
+        is_dim : bool
+            ``True`` for widths/heights (dimensions), ``False`` for x/y
+            positions (locations).
+        gp : Gpar or None
+            Current graphical parameters (needed for ``"lines"`` and
+            ``"char"`` units).
+        """
+        from ._units import Unit, _INCHES_PER
+
+        if not isinstance(unit_obj, Unit):
+            return float(unit_obj)
+
+        value = float(unit_obj._values[0])
+        utype = unit_obj._units[0]
+
+        # Viewport physical size in inches.
+        # Account for viewport rotation: when angle is ~90 or ~270 deg,
+        # effective width and height swap (mirrors R's viewportWidthCM /
+        # viewportHeightCM which factor in the viewport transform).
+        x0, y0, pw, ph, vp_obj = self._vp_stack[-1]
+        angle = float(getattr(vp_obj, "_angle", 0)) if vp_obj is not None else 0.0
+        import math
+        sin_a = abs(math.sin(math.radians(angle)))
+        cos_a = abs(math.cos(math.radians(angle)))
+        eff_w = pw * cos_a + ph * sin_a
+        eff_h = ph * cos_a + pw * sin_a
+        vp_px = eff_w if axis == "x" else eff_h
+        vp_inches = vp_px / self.dpi
+        if vp_inches == 0:
+            return 0.0
+
+        # --- NPC: already normalised ---
+        if utype == "npc":
+            return value
+
+        # --- Absolute physical units (cm, inches, mm, points, …) ---
+        if utype in _INCHES_PER:
+            inches = value * _INCHES_PER[utype]
+            return inches / vp_inches
+
+        # --- Native (data coordinates) ---
+        if utype == "native":
+            if vp_obj is not None:
+                scale = (getattr(vp_obj, "_xscale", [0, 1])
+                         if axis == "x"
+                         else getattr(vp_obj, "_yscale", [0, 1]))
+            else:
+                scale = [0, 1]
+            smin, smax = float(scale[0]), float(scale[1])
+            srange = smax - smin
+            if srange == 0:
+                return 0.0
+            if is_dim:
+                return value / srange
+            return (value - smin) / srange
+
+        # --- Character / line units (font-relative) ---
+        if utype in ("char", "lines"):
+            fontsize = 12.0
+            cex = 1.0
+            lineheight = 1.2
+            if gp is not None:
+                fs = gp.get("fontsize", None)
+                if fs is not None:
+                    fontsize = float(fs[0] if isinstance(fs, (list, tuple)) else fs)
+                cx = gp.get("cex", None)
+                if cx is not None:
+                    cex = float(cx[0] if isinstance(cx, (list, tuple)) else cx)
+                if utype == "lines":
+                    lh = gp.get("lineheight", None)
+                    if lh is not None:
+                        lineheight = float(lh[0] if isinstance(lh, (list, tuple)) else lh)
+            pts = value * fontsize * cex
+            if utype == "lines":
+                pts *= lineheight
+            inches = pts / 72.0
+            return inches / vp_inches
+
+        # --- Null: zero in draw context ---
+        if utype == "null":
+            return 0.0
+
+        # --- SNPC: square NPC (uses the smaller dimension) ---
+        if utype == "snpc":
+            other_px = eff_h if axis == "x" else eff_w
+            min_inches = min(vp_px, other_px) / self.dpi
+            inches = value * min_inches
+            return inches / vp_inches
+
+        # --- String metrics ---
+        if utype in ("strwidth", "strheight", "strascent", "strdescent"):
+            from ._size import calc_string_metric
+            text = str(unit_obj._data[0]) if unit_obj._data[0] is not None else ""
+            m = calc_string_metric(text, gp=gp)
+            if utype == "strwidth":
+                inches = m["width"]
+            elif utype == "strheight":
+                inches = m["ascent"] + m["descent"]
+            elif utype == "strascent":
+                inches = m["ascent"]
+            else:
+                inches = m["descent"]
+            return (inches * value) / vp_inches
+
+        # --- Grob metrics ---
+        if utype in ("grobwidth", "grobheight", "grobascent", "grobdescent"):
+            from ._size import width_details, height_details, ascent_details, descent_details
+            grob_ref = unit_obj._data[0]
+            if grob_ref is not None:
+                dispatch = {
+                    "grobwidth": width_details,
+                    "grobheight": height_details,
+                    "grobascent": ascent_details,
+                    "grobdescent": descent_details,
+                }
+                metric_unit = dispatch[utype](grob_ref)
+                if metric_unit is not None and hasattr(metric_unit, "_units"):
+                    # Recursively resolve the metric result
+                    return self._resolve_to_npc(
+                        metric_unit, axis=axis, is_dim=True, gp=gp
+                    ) * value
+            return 0.0
+
+        # --- Compound units (sum, min, max) ---
+        if utype == "sum":
+            child = unit_obj._data[0]
+            if isinstance(child, Unit):
+                total = 0.0
+                for j in range(len(child)):
+                    elem = Unit(child._values[j], child._units[j],
+                                data=child._data[j])
+                    total += self._resolve_to_npc(elem, axis, is_dim, gp)
+                return total * value
+            return 0.0
+
+        if utype == "min":
+            child = unit_obj._data[0]
+            if isinstance(child, Unit):
+                best = float("inf")
+                for j in range(len(child)):
+                    elem = Unit(child._values[j], child._units[j],
+                                data=child._data[j])
+                    best = min(best, self._resolve_to_npc(elem, axis, is_dim, gp))
+                return best * value if best != float("inf") else 0.0
+            return 0.0
+
+        if utype == "max":
+            child = unit_obj._data[0]
+            if isinstance(child, Unit):
+                best = float("-inf")
+                for j in range(len(child)):
+                    elem = Unit(child._values[j], child._units[j],
+                                data=child._data[j])
+                    best = max(best, self._resolve_to_npc(elem, axis, is_dim, gp))
+                return best * value if best != float("-inf") else 0.0
+            return 0.0
+
+        # --- Fallback: treat as NPC (backward compat) ---
+        return value
+
+    # -- public convenience methods --
+
+    def resolve_x(self, val: Any, gp: Optional[Any] = None) -> float:
+        """Resolve *val* to an NPC x-coordinate."""
+        from ._units import Unit
+        if not isinstance(val, Unit):
+            return float(val)
+        return self._resolve_to_npc(val, axis="x", is_dim=False, gp=gp)
+
+    def resolve_y(self, val: Any, gp: Optional[Any] = None) -> float:
+        """Resolve *val* to an NPC y-coordinate."""
+        from ._units import Unit
+        if not isinstance(val, Unit):
+            return float(val)
+        return self._resolve_to_npc(val, axis="y", is_dim=False, gp=gp)
+
+    def resolve_w(self, val: Any, gp: Optional[Any] = None) -> float:
+        """Resolve *val* to an NPC width (fraction of viewport)."""
+        from ._units import Unit
+        if not isinstance(val, Unit):
+            return float(val)
+        return self._resolve_to_npc(val, axis="x", is_dim=True, gp=gp)
+
+    def resolve_h(self, val: Any, gp: Optional[Any] = None) -> float:
+        """Resolve *val* to an NPC height (fraction of viewport)."""
+        from ._units import Unit
+        if not isinstance(val, Unit):
+            return float(val)
+        return self._resolve_to_npc(val, axis="y", is_dim=True, gp=gp)
+
+    def resolve_x_array(self, val: Any, gp: Optional[Any] = None) -> "np.ndarray":
+        """Resolve *val* to an array of NPC x-coordinates."""
+        from ._units import Unit
+        if isinstance(val, Unit):
+            out = np.empty(len(val), dtype=float)
+            for i in range(len(val)):
+                elem = Unit(val._values[i], val._units[i],
+                            data=val._data[i])
+                out[i] = self._resolve_to_npc(elem, "x", False, gp)
+            return out
+        if isinstance(val, (list, tuple)):
+            return np.asarray([self.resolve_x(v, gp) for v in val], dtype=float)
+        return np.atleast_1d(np.asarray(val, dtype=float))
+
+    def resolve_y_array(self, val: Any, gp: Optional[Any] = None) -> "np.ndarray":
+        """Resolve *val* to an array of NPC y-coordinates."""
+        from ._units import Unit
+        if isinstance(val, Unit):
+            out = np.empty(len(val), dtype=float)
+            for i in range(len(val)):
+                elem = Unit(val._values[i], val._units[i],
+                            data=val._data[i])
+                out[i] = self._resolve_to_npc(elem, "y", False, gp)
+            return out
+        if isinstance(val, (list, tuple)):
+            return np.asarray([self.resolve_y(v, gp) for v in val], dtype=float)
+        return np.atleast_1d(np.asarray(val, dtype=float))
+
+    def resolve_w_array(self, val: Any, gp: Optional[Any] = None) -> "np.ndarray":
+        """Resolve *val* to an array of NPC widths."""
+        from ._units import Unit
+        if isinstance(val, Unit):
+            out = np.empty(len(val), dtype=float)
+            for i in range(len(val)):
+                elem = Unit(val._values[i], val._units[i],
+                            data=val._data[i])
+                out[i] = self._resolve_to_npc(elem, "x", True, gp)
+            return out
+        if isinstance(val, (list, tuple)):
+            return np.asarray([self.resolve_w(v, gp) for v in val], dtype=float)
+        return np.atleast_1d(np.asarray(val, dtype=float))
+
+    def resolve_h_array(self, val: Any, gp: Optional[Any] = None) -> "np.ndarray":
+        """Resolve *val* to an array of NPC heights."""
+        from ._units import Unit
+        if isinstance(val, Unit):
+            out = np.empty(len(val), dtype=float)
+            for i in range(len(val)):
+                elem = Unit(val._values[i], val._units[i],
+                            data=val._data[i])
+                out[i] = self._resolve_to_npc(elem, "y", True, gp)
+            return out
+        if isinstance(val, (list, tuple)):
+            return np.asarray([self.resolve_h(v, gp) for v in val], dtype=float)
+        return np.atleast_1d(np.asarray(val, dtype=float))
+
     # ---- coordinate helpers ------------------------------------------------
 
     def _x(self, npc: float) -> float:
         """Convert NPC x → device x (within current viewport)."""
-        x0, y0, pw, ph = self._vp_stack[-1]
+        x0, y0, pw, ph, *_vp_rest = self._vp_stack[-1]
         return x0 + npc * pw
 
     def _y(self, npc: float) -> float:
@@ -564,7 +852,7 @@ class CairoRenderer:
           NPC 0 (bottom) → device ``y0 + ph``
           NPC 1 (top)    → device ``y0``
         """
-        x0, y0, pw, ph = self._vp_stack[-1]
+        x0, y0, pw, ph, *_vp_rest = self._vp_stack[-1]
         return y0 + (1.0 - npc) * ph
 
     def _sx(self, npc: float) -> float:
@@ -995,6 +1283,10 @@ class CairoRenderer:
 
         ctx.rectangle(dx, dy, dw, dh)
 
+        if self._path_collecting:
+            ctx.restore()
+            return
+
         # Compute bbox in NPC for group=False gradient resolution
         bbox = (x0, y0, w, h)
         self._apply_fill(gp, bbox=bbox)
@@ -1023,6 +1315,10 @@ class CairoRenderer:
         dr = (self._sx(r) + self._sy(r)) / 2.0
 
         ctx.arc(cx, cy, dr, 0, 2 * math.pi)
+
+        if self._path_collecting:
+            ctx.restore()
+            return
 
         # Compute bbox in NPC for group=False gradient resolution
         bbox = (x - r, y - r, 2 * r, 2 * r)
@@ -1053,12 +1349,16 @@ class CairoRenderer:
 
         ctx = self._ctx
         ctx.save()
-        stroke = self._apply_stroke(gp)
 
         ctx.move_to(self._x(x[0]), self._y(y[0]))
         for i in range(1, n):
             ctx.line_to(self._x(x[i]), self._y(y[i]))
 
+        if self._path_collecting:
+            ctx.restore()
+            return
+
+        stroke = self._apply_stroke(gp)
         if stroke[3] > 0:
             ctx.stroke()
         else:
@@ -1074,7 +1374,6 @@ class CairoRenderer:
     ) -> None:
         ctx = self._ctx
         ctx.save()
-        stroke = self._apply_stroke(gp)
 
         if id_ is None:
             self.draw_line(x, y, gp)
@@ -1090,11 +1389,16 @@ class CairoRenderer:
             ctx.move_to(self._x(px[0]), self._y(py[0]))
             for i in range(1, len(px)):
                 ctx.line_to(self._x(px[i]), self._y(py[i]))
-            if stroke[3] > 0:
-                ctx.stroke()
-            else:
-                ctx.new_path()
 
+        if self._path_collecting:
+            ctx.restore()
+            return
+
+        stroke = self._apply_stroke(gp)
+        if stroke[3] > 0:
+            ctx.stroke()
+        else:
+            ctx.new_path()
         ctx.restore()
 
     def draw_segments(
@@ -1107,13 +1411,17 @@ class CairoRenderer:
     ) -> None:
         ctx = self._ctx
         ctx.save()
-        stroke = self._apply_stroke(gp)
 
         n = min(len(x0), len(y0), len(x1), len(y1))
         for i in range(n):
             ctx.move_to(self._x(x0[i]), self._y(y0[i]))
             ctx.line_to(self._x(x1[i]), self._y(y1[i]))
 
+        if self._path_collecting:
+            ctx.restore()
+            return
+
+        stroke = self._apply_stroke(gp)
         if stroke[3] > 0:
             ctx.stroke()
         else:
@@ -1135,6 +1443,10 @@ class CairoRenderer:
         for i in range(1, len(x)):
             ctx.line_to(self._x(x[i]), self._y(y[i]))
         ctx.close_path()
+
+        if self._path_collecting:
+            ctx.restore()
+            return
 
         # Compute bbox from polygon vertices
         bbox = (float(np.min(x)), float(np.min(y)),
@@ -1176,6 +1488,10 @@ class CairoRenderer:
             for i in range(1, len(px)):
                 ctx.line_to(self._x(px[i]), self._y(py[i]))
             ctx.close_path()
+
+        if self._path_collecting:
+            ctx.restore()
+            return
 
         bbox = (float(np.min(x)), float(np.min(y)),
                 float(np.ptp(x)), float(np.ptp(y)))
@@ -1223,7 +1539,12 @@ class CairoRenderer:
         else:
             ctx.move_to(dx + off_x, dy + off_y)
 
-        ctx.show_text(str(label))
+        if self._path_collecting:
+            # Build text outline path without rendering pixels
+            # (mirrors R's use of cairo_text_path in C_stroke/C_fill)
+            ctx.text_path(str(label))
+        else:
+            ctx.show_text(str(label))
         ctx.restore()
 
     # ------------------------------------------------------------------ #
@@ -1636,6 +1957,10 @@ class CairoRenderer:
             ctx.arc(dx + dr, dy + dh - dr, dr, math.pi / 2, math.pi)
             ctx.arc(dx + dr, dy + dr, dr, math.pi, 3 * math.pi / 2)
             ctx.close_path()
+
+        if self._path_collecting:
+            ctx.restore()
+            return
 
         bbox = (x0, y0, w, h)
         self._apply_fill(gp, bbox=bbox)

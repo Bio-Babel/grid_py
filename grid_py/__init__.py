@@ -96,6 +96,10 @@ from grid_py._primitives import (
     clip_grob, grid_clip,
     null_grob, grid_null,
     function_grob, grid_function,
+    as_path,
+    stroke_grob, grid_stroke,
+    fill_grob, grid_fill,
+    fill_stroke_grob, grid_fill_stroke,
 )
 
 # --- Coordinates ---
@@ -169,6 +173,7 @@ from grid_py._highlevel import (
 # --- Size / Metrics ---
 from grid_py._size import (
     calc_string_metric,
+    width_details, height_details, ascent_details, descent_details,
     grob_width, grob_height, grob_x, grob_y,
     grob_ascent, grob_descent,
 )

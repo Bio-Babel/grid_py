@@ -207,7 +207,7 @@ class TestRendererSurfaceTypes:
         pdf_path = str(tmp_path / "vp_test.pdf")
         r = CairoRenderer(width=5, height=4, surface_type="pdf", filename=pdf_path)
         # Initial viewport stack for vector surfaces is in pt
-        x0, y0, w, h = r._vp_stack[-1]
+        x0, y0, w, h, *_ = r._vp_stack[-1]
         assert w == pytest.approx(5 * 72.0)
         assert h == pytest.approx(4 * 72.0)
         r.finish()

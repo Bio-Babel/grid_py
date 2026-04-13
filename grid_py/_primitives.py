@@ -2046,3 +2046,179 @@ def grid_function(
     if draw:
         _grid_draw(grob)
     return grob
+
+
+# ===================================================================== #
+#  Path fill / stroke primitives (R 4.2+, grid/R/path.R)                #
+# ===================================================================== #
+
+
+def as_path(
+    x: Any,
+    gp: Optional[Gpar] = None,
+    rule: str = "winding",
+) -> dict:
+    """Mark a grob as a single path.
+
+    Mirrors R's ``as.path()`` (``path.R:3-9``).
+
+    Parameters
+    ----------
+    x : Grob
+        The grob to convert.
+    gp : Gpar or None
+        Graphical parameters.
+    rule : str
+        Fill rule: ``"winding"`` (default) or ``"evenodd"``.
+
+    Returns
+    -------
+    dict
+        A ``GridPath`` descriptor with keys ``grob``, ``gp``, ``rule``.
+    """
+    return {
+        "grob": x,
+        "gp": gp if gp is not None else Gpar(),
+        "rule": rule,
+        "_class": "GridPath",
+    }
+
+
+def stroke_grob(
+    x: Any,
+    name: Optional[str] = None,
+    gp: Optional[Gpar] = None,
+    vp: Optional[Any] = None,
+) -> Grob:
+    """Create a stroke-only path grob.
+
+    Draws the outline of the nested grob without filling.
+    Mirrors R's ``strokeGrob()`` (``path.R:20-35``).
+
+    Parameters
+    ----------
+    x : Grob or GridPath dict
+        The grob (or ``as_path`` result) defining the path.
+    name, gp, vp
+        Standard grob parameters.
+
+    Returns
+    -------
+    Grob
+        A grob with ``_grid_class="GridStroke"``.
+    """
+    if isinstance(x, dict) and x.get("_class") == "GridPath":
+        return Grob(
+            path=x["grob"], name=name, gp=x["gp"], vp=vp,
+            _grid_class="GridStroke",
+        )
+    return Grob(
+        path=x, name=name, gp=gp if gp is not None else Gpar(), vp=vp,
+        _grid_class="GridStroke",
+    )
+
+
+def grid_stroke(x: Any, **kwargs: Any) -> Grob:
+    """Create and draw a stroke-only path grob.
+
+    Mirrors R's ``grid.stroke()``.
+    """
+    grob = stroke_grob(x, **kwargs)
+    _grid_draw(grob)
+    return grob
+
+
+def fill_grob(
+    x: Any,
+    rule: str = "winding",
+    name: Optional[str] = None,
+    gp: Optional[Gpar] = None,
+    vp: Optional[Any] = None,
+) -> Grob:
+    """Create a fill-only path grob.
+
+    Fills the interior of the nested grob without stroking the outline.
+    Mirrors R's ``fillGrob()`` (``path.R:49-64``).
+
+    Parameters
+    ----------
+    x : Grob or GridPath dict
+        The grob (or ``as_path`` result) defining the path.
+    rule : str
+        Fill rule: ``"winding"`` or ``"evenodd"``.
+    name, gp, vp
+        Standard grob parameters.
+
+    Returns
+    -------
+    Grob
+        A grob with ``_grid_class="GridFill"``.
+    """
+    if isinstance(x, dict) and x.get("_class") == "GridPath":
+        return Grob(
+            path=x["grob"], rule=x["rule"], name=name, gp=x["gp"], vp=vp,
+            _grid_class="GridFill",
+        )
+    return Grob(
+        path=x, rule=rule, name=name,
+        gp=gp if gp is not None else Gpar(), vp=vp,
+        _grid_class="GridFill",
+    )
+
+
+def grid_fill(x: Any, **kwargs: Any) -> Grob:
+    """Create and draw a fill-only path grob.
+
+    Mirrors R's ``grid.fill()``.
+    """
+    grob = fill_grob(x, **kwargs)
+    _grid_draw(grob)
+    return grob
+
+
+def fill_stroke_grob(
+    x: Any,
+    rule: str = "winding",
+    name: Optional[str] = None,
+    gp: Optional[Gpar] = None,
+    vp: Optional[Any] = None,
+) -> Grob:
+    """Create a fill-and-stroke path grob.
+
+    Fills and then strokes the nested grob as a single combined path.
+    Mirrors R's ``fillStrokeGrob()`` (``path.R:80-95``).
+
+    Parameters
+    ----------
+    x : Grob or GridPath dict
+        The grob (or ``as_path`` result) defining the path.
+    rule : str
+        Fill rule: ``"winding"`` or ``"evenodd"``.
+    name, gp, vp
+        Standard grob parameters.
+
+    Returns
+    -------
+    Grob
+        A grob with ``_grid_class="GridFillStroke"``.
+    """
+    if isinstance(x, dict) and x.get("_class") == "GridPath":
+        return Grob(
+            path=x["grob"], rule=x["rule"], name=name, gp=x["gp"], vp=vp,
+            _grid_class="GridFillStroke",
+        )
+    return Grob(
+        path=x, rule=rule, name=name,
+        gp=gp if gp is not None else Gpar(), vp=vp,
+        _grid_class="GridFillStroke",
+    )
+
+
+def grid_fill_stroke(x: Any, **kwargs: Any) -> Grob:
+    """Create and draw a fill-and-stroke path grob.
+
+    Mirrors R's ``grid.fillStroke()``.
+    """
+    grob = fill_stroke_grob(x, **kwargs)
+    _grid_draw(grob)
+    return grob

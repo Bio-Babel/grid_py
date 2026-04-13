@@ -213,6 +213,41 @@ class TestGrobConvenience:
         assert u._units[0] == "grobdescent"
 
 
+class TestDetailDispatchersReal:
+    """Tests using real grobs (not FakeGrob) for _grid_class dispatch."""
+
+    def test_text_grob_width(self):
+        from grid_py._primitives import text_grob
+        result = width_details(text_grob("Hello"))
+        assert result._units[0] == "inches"
+        assert result._values[0] > 0
+
+    def test_null_grob_height(self):
+        from grid_py._primitives import null_grob
+        result = height_details(null_grob())
+        assert result._values[0] == 0
+        assert result._units[0] == "inches"
+
+    def test_grob_returning_none_falls_back(self):
+        """A grob whose width_details() returns None should get the default."""
+        from grid_py._grob import Grob
+        g = Grob()  # base Grob: width_details returns None
+        result = width_details(g)
+        assert result._units[0] == "null"
+
+    def test_text_ascent_dispatch(self):
+        from grid_py._primitives import text_grob
+        result = ascent_details(text_grob("X"))
+        assert result._units[0] == "inches"
+        assert result._values[0] > 0
+
+    def test_text_descent_dispatch(self):
+        from grid_py._primitives import text_grob
+        result = descent_details(text_grob("X"))
+        assert result._units[0] == "inches"
+        assert result._values[0] >= 0
+
+
 class TestAbsoluteSize:
     """Tests for absolute_size."""
 

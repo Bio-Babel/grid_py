@@ -105,7 +105,13 @@ def _subset_gpar(gp: Optional[Gpar], i: int) -> Optional[Gpar]:
 
 
 def _unit_to_float(val: Any) -> float:
-    """Extract a scalar float from a value that may be a Unit."""
+    """Extract a scalar float from a value that may be a Unit.
+
+    .. deprecated::
+        Use ``renderer.resolve_x/y/w/h`` instead for unit-aware resolution.
+        This function is kept only for call sites that genuinely need a raw
+        numeric value without unit resolution (e.g. rotation angles).
+    """
     from ._units import Unit
     if isinstance(val, Unit):
         return float(val._values[0])
@@ -113,7 +119,11 @@ def _unit_to_float(val: Any) -> float:
 
 
 def _unit_to_array(val: Any) -> np.ndarray:
-    """Extract a numeric array from a value that may be a Unit."""
+    """Extract a numeric array from a value that may be a Unit.
+
+    .. deprecated::
+        Use ``renderer.resolve_x/y_array`` instead for unit-aware resolution.
+    """
     from ._units import Unit
     if isinstance(val, Unit):
         return np.asarray(val._values, dtype=float)
@@ -154,10 +164,10 @@ def _render_grob(
 
     # ---- rect -----------------------------------------------------------
     if cls == "rect":
-        xs = _unit_to_array(getattr(grob, "x", [0.0]))
-        ys = _unit_to_array(getattr(grob, "y", [0.0]))
-        ws = _unit_to_array(getattr(grob, "width", [1.0]))
-        hs = _unit_to_array(getattr(grob, "height", [1.0]))
+        xs = renderer.resolve_x_array(getattr(grob, "x", [0.0]), gp=gp)
+        ys = renderer.resolve_y_array(getattr(grob, "y", [0.0]), gp=gp)
+        ws = renderer.resolve_w_array(getattr(grob, "width", [1.0]), gp=gp)
+        hs = renderer.resolve_h_array(getattr(grob, "height", [1.0]), gp=gp)
         hj, vj = _resolve_just(grob)
         n = max(len(xs), len(ys), len(ws), len(hs))
         if len(xs) == 1:
@@ -179,11 +189,11 @@ def _render_grob(
     # ---- roundrect ------------------------------------------------------
     elif cls == "roundrect":
         renderer.draw_roundrect(
-            x=_unit_to_float(getattr(grob, "x", 0.0)),
-            y=_unit_to_float(getattr(grob, "y", 0.0)),
-            w=_unit_to_float(getattr(grob, "width", 1.0)),
-            h=_unit_to_float(getattr(grob, "height", 1.0)),
-            r=_unit_to_float(getattr(grob, "r", 0.0)),
+            x=renderer.resolve_x(getattr(grob, "x", 0.0), gp=gp),
+            y=renderer.resolve_y(getattr(grob, "y", 0.0), gp=gp),
+            w=renderer.resolve_w(getattr(grob, "width", 1.0), gp=gp),
+            h=renderer.resolve_h(getattr(grob, "height", 1.0), gp=gp),
+            r=renderer.resolve_w(getattr(grob, "r", 0.0), gp=gp),
             hjust=float(getattr(grob, "hjust", None) or 0.5),
             vjust=float(getattr(grob, "vjust", None) or 0.5),
             gp=gp,
@@ -192,16 +202,16 @@ def _render_grob(
     # ---- circle ---------------------------------------------------------
     elif cls == "circle":
         renderer.draw_circle(
-            x=_unit_to_float(getattr(grob, "x", 0.5)),
-            y=_unit_to_float(getattr(grob, "y", 0.5)),
-            r=_unit_to_float(getattr(grob, "r", 0.5)),
+            x=renderer.resolve_x(getattr(grob, "x", 0.5), gp=gp),
+            y=renderer.resolve_y(getattr(grob, "y", 0.5), gp=gp),
+            r=renderer.resolve_w(getattr(grob, "r", 0.5), gp=gp),
             gp=gp,
         )
 
     # ---- lines / polyline ------------------------------------------------
     elif cls in ("lines", "polyline"):
-        x = _unit_to_array(getattr(grob, "x", [0.0, 1.0]))
-        y = _unit_to_array(getattr(grob, "y", [0.0, 1.0]))
+        x = renderer.resolve_x_array(getattr(grob, "x", [0.0, 1.0]), gp=gp)
+        y = renderer.resolve_y_array(getattr(grob, "y", [0.0, 1.0]), gp=gp)
         id_ = getattr(grob, "id", None)
         if id_ is not None:
             id_ = np.atleast_1d(np.asarray(id_, dtype=int))
@@ -210,17 +220,17 @@ def _render_grob(
     # ---- segments --------------------------------------------------------
     elif cls == "segments":
         renderer.draw_segments(
-            x0=_unit_to_array(getattr(grob, "x0", [])),
-            y0=_unit_to_array(getattr(grob, "y0", [])),
-            x1=_unit_to_array(getattr(grob, "x1", [])),
-            y1=_unit_to_array(getattr(grob, "y1", [])),
+            x0=renderer.resolve_x_array(getattr(grob, "x0", []), gp=gp),
+            y0=renderer.resolve_y_array(getattr(grob, "y0", []), gp=gp),
+            x1=renderer.resolve_x_array(getattr(grob, "x1", []), gp=gp),
+            y1=renderer.resolve_y_array(getattr(grob, "y1", []), gp=gp),
             gp=gp,
         )
 
     # ---- polygon ---------------------------------------------------------
     elif cls == "polygon":
-        px = _unit_to_array(getattr(grob, "x", []))
-        py = _unit_to_array(getattr(grob, "y", []))
+        px = renderer.resolve_x_array(getattr(grob, "x", []), gp=gp)
+        py = renderer.resolve_y_array(getattr(grob, "y", []), gp=gp)
         pid = getattr(grob, "id", None)
         if pid is not None:
             # R semantics: polygonGrob(id=...) draws separate polygons
@@ -238,8 +248,8 @@ def _render_grob(
     elif cls == "text":
         hj, vj = _resolve_just(grob)
         renderer.draw_text(
-            x=_unit_to_float(getattr(grob, "x", 0.5)),
-            y=_unit_to_float(getattr(grob, "y", 0.5)),
+            x=renderer.resolve_x(getattr(grob, "x", 0.5), gp=gp),
+            y=renderer.resolve_y(getattr(grob, "y", 0.5), gp=gp),
             label=getattr(grob, "label", ""),
             rot=float(getattr(grob, "rot", 0.0)),
             hjust=hj,
@@ -258,17 +268,17 @@ def _render_grob(
         else:
             pch_val = 19
         renderer.draw_points(
-            x=_unit_to_array(getattr(grob, "x", [])),
-            y=_unit_to_array(getattr(grob, "y", [])),
-            size=_unit_to_float(getattr(grob, "size", 1.0)),
+            x=renderer.resolve_x_array(getattr(grob, "x", []), gp=gp),
+            y=renderer.resolve_y_array(getattr(grob, "y", []), gp=gp),
+            size=renderer.resolve_w(getattr(grob, "size", 1.0), gp=gp),
             pch=pch_val,
             gp=gp,
         )
 
     # ---- pathgrob --------------------------------------------------------
     elif cls == "pathgrob":
-        x = _unit_to_array(getattr(grob, "x", []))
-        y = _unit_to_array(getattr(grob, "y", []))
+        x = renderer.resolve_x_array(getattr(grob, "x", []), gp=gp)
+        y = renderer.resolve_y_array(getattr(grob, "y", []), gp=gp)
         path_id = getattr(grob, "pathId", None)
         if path_id is None:
             path_id = np.ones(len(x), dtype=int)
@@ -288,10 +298,10 @@ def _render_grob(
         if image is not None:
             # Apply justification (same as rect_grob)
             hj, vj = _resolve_just(grob)
-            raw_x = _unit_to_float(getattr(grob, "x", 0.0))
-            raw_y = _unit_to_float(getattr(grob, "y", 0.0))
-            raw_w = _unit_to_float(getattr(grob, "width", 1.0))
-            raw_h = _unit_to_float(getattr(grob, "height", 1.0))
+            raw_x = renderer.resolve_x(getattr(grob, "x", 0.0), gp=gp)
+            raw_y = renderer.resolve_y(getattr(grob, "y", 0.0), gp=gp)
+            raw_w = renderer.resolve_w(getattr(grob, "width", 1.0), gp=gp)
+            raw_h = renderer.resolve_h(getattr(grob, "height", 1.0), gp=gp)
             # Compute bottom-left corner from anchor + justification
             x0 = raw_x - raw_w * hj
             y0 = raw_y - raw_h * vj
@@ -304,6 +314,36 @@ def _render_grob(
                 interpolate=getattr(grob, "interpolate", True),
             )
 
+    # ---- GridStroke / GridFill / GridFillStroke (R 4.2+, path.R) ----------
+    elif cls == "GridStroke":
+        path_grob = getattr(grob, "path", None)
+        if path_grob is not None and hasattr(renderer, "begin_path_collect"):
+            renderer._ctx.save()
+            renderer.begin_path_collect()
+            _render_grob(path_grob, renderer, gp=gp)
+            renderer.end_path_stroke(gp)
+            renderer._ctx.restore()
+
+    elif cls == "GridFill":
+        path_grob = getattr(grob, "path", None)
+        rule = getattr(grob, "rule", "winding")
+        if path_grob is not None and hasattr(renderer, "begin_path_collect"):
+            renderer._ctx.save()
+            renderer.begin_path_collect(rule=rule)
+            _render_grob(path_grob, renderer, gp=gp)
+            renderer.end_path_fill(gp)
+            renderer._ctx.restore()
+
+    elif cls == "GridFillStroke":
+        path_grob = getattr(grob, "path", None)
+        rule = getattr(grob, "rule", "winding")
+        if path_grob is not None and hasattr(renderer, "begin_path_collect"):
+            renderer._ctx.save()
+            renderer.begin_path_collect(rule=rule)
+            _render_grob(path_grob, renderer, gp=gp)
+            renderer.end_path_fill_stroke(gp)
+            renderer._ctx.restore()
+
     # ---- null / gTree / base grob – no-op --------------------------------
     elif cls in ("null", "grob", "gTree"):
         pass
@@ -311,14 +351,14 @@ def _render_grob(
     # ---- move.to / line.to -----------------------------------------------
     elif cls == "move.to":
         renderer.move_to(
-            _unit_to_float(getattr(grob, "x", 0.0)),
-            _unit_to_float(getattr(grob, "y", 0.0)),
+            renderer.resolve_x(getattr(grob, "x", 0.0), gp=gp),
+            renderer.resolve_y(getattr(grob, "y", 0.0), gp=gp),
         )
 
     elif cls == "line.to":
         renderer.line_to(
-            _unit_to_float(getattr(grob, "x", 0.0)),
-            _unit_to_float(getattr(grob, "y", 0.0)),
+            renderer.resolve_x(getattr(grob, "x", 0.0), gp=gp),
+            renderer.resolve_y(getattr(grob, "y", 0.0), gp=gp),
             gp=gp,
         )
 
@@ -997,7 +1037,7 @@ def grid_locator(
         return None
 
     # Current viewport bounds in device coords: (x0, y0, pw, ph)
-    x0, y0, pw, ph = renderer._vp_stack[-1]
+    x0, y0, pw, ph, *_vp_rest = renderer._vp_stack[-1]
     if pw == 0 or ph == 0:
         return None
 

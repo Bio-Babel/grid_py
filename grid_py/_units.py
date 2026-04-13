@@ -144,6 +144,132 @@ _INCHES_PER: Dict[str, float] = {
 # Set of unit types that can be converted without a viewport context
 _ABSOLUTE_UNIT_TYPES: frozenset = frozenset(_INCHES_PER.keys())
 
+# Unit types resolved by measuring a string or querying a grob
+_STR_METRIC_TYPES: frozenset = frozenset(
+    {"strwidth", "strheight", "strascent", "strdescent"}
+)
+_GROB_METRIC_TYPES: frozenset = frozenset(
+    {"grobwidth", "grobheight", "grobascent", "grobdescent"}
+)
+
+
+def _eval_str_metric(unit_type: str, data: Any, scale: float = 1.0) -> float:
+    """Evaluate a string-metric unit to an inch value.
+
+    Uses a lazy import of :func:`._size.calc_string_metric` to avoid
+    circular dependencies (``_size`` imports ``Unit`` from this module).
+
+    Parameters
+    ----------
+    unit_type : str
+        One of ``"strwidth"``, ``"strheight"``, ``"strascent"``,
+        ``"strdescent"``.
+    data : object
+        The string stored as auxiliary data in the unit.
+    scale : float
+        Multiplicative factor (the unit's numeric value).
+
+    Returns
+    -------
+    float
+        Measurement in inches, scaled by *scale*.
+    """
+    from ._size import calc_string_metric  # lazy – avoids circular import
+
+    text = str(data) if data is not None else ""
+    m = calc_string_metric(text)
+    if unit_type == "strwidth":
+        return m["width"] * scale
+    elif unit_type == "strheight":
+        return (m["ascent"] + m["descent"]) * scale
+    elif unit_type == "strascent":
+        return m["ascent"] * scale
+    elif unit_type == "strdescent":
+        return m["descent"] * scale
+    return 0.0  # pragma: no cover
+
+
+def _eval_grob_metric(unit_type: str, grob: Any) -> Optional["Unit"]:
+    """Evaluate a grob-metric unit by calling the appropriate detail dispatcher.
+
+    Uses a lazy import of dispatchers from :mod:`._size` to avoid
+    circular dependencies.
+
+    Parameters
+    ----------
+    unit_type : str
+        One of ``"grobwidth"``, ``"grobheight"``, ``"grobascent"``,
+        ``"grobdescent"``.
+    grob : object
+        The grob stored as auxiliary data in the unit.
+
+    Returns
+    -------
+    Unit or None
+        The measured dimension as a :class:`Unit`, or ``None`` if the
+        grob is ``None``.
+    """
+    from ._size import (  # lazy – avoids circular import
+        width_details,
+        height_details,
+        ascent_details,
+        descent_details,
+    )
+
+    if grob is None:
+        return None
+    _dispatch = {
+        "grobwidth": width_details,
+        "grobheight": height_details,
+        "grobascent": ascent_details,
+        "grobdescent": descent_details,
+    }
+    return _dispatch[unit_type](grob)
+
+
+def _try_resolve_with_renderer(
+    x: "Unit",
+    i: int,
+    src_unit: str,
+    target: str,
+    axis: str,
+    type_: str,
+) -> Optional[float]:
+    """Try to resolve a context-dependent unit via the active renderer.
+
+    Returns the converted value in *target* units, or ``None`` if no
+    renderer is available.
+    """
+    try:
+        from ._state import get_state
+        state = get_state()
+        renderer = state.get_renderer() if hasattr(state, "get_renderer") else None
+    except Exception:
+        return None
+
+    if renderer is None or not hasattr(renderer, "_resolve_to_npc"):
+        return None
+
+    # Build a single-element Unit for the source
+    elem = Unit(x._values[i], src_unit, data=x._data[i])
+    is_dim = type_ in ("dimension",)
+
+    # Resolve source → NPC
+    npc_val = renderer._resolve_to_npc(elem, axis=axis, is_dim=is_dim)
+
+    # Convert NPC → target
+    if target == "npc":
+        return npc_val
+    elif target in _ABSOLUTE_UNIT_TYPES:
+        # NPC → inches → target
+        vp_px = renderer._vp_stack[-1][2] if axis == "x" else renderer._vp_stack[-1][3]
+        vp_inches = vp_px / renderer.dpi
+        inches = npc_val * vp_inches
+        return inches / _INCHES_PER[target]
+    else:
+        # Target is also context-dependent — just return the NPC value
+        return npc_val
+
 
 def _resolve_alias(unit_str: str) -> str:
     """Return the canonical unit-type string, resolving common aliases.
@@ -1047,8 +1173,9 @@ def convert_unit(
 
     Absolute-to-absolute conversions (e.g. cm to inches) are performed
     immediately.  Context-dependent conversions (involving npc, native,
-    lines, etc.) require a viewport and are currently deferred -- the unit
-    is returned unchanged with a warning when no context is available.
+    lines, etc.) use the active renderer's viewport context when
+    available; otherwise a warning is issued and the unit is returned
+    unchanged.
 
     Parameters
     ----------
@@ -1100,10 +1227,47 @@ def convert_unit(
         elif src_unit == target:
             # Same unit type -- no conversion needed
             result_vals[i] = x._values[i]
+        elif src_unit in _STR_METRIC_TYPES:
+            # Evaluate string metric → inches, then convert to target
+            inches_val = _eval_str_metric(src_unit, x._data[i], x._values[i])
+            if target in _ABSOLUTE_UNIT_TYPES:
+                result_vals[i] = inches_val / _INCHES_PER[target]
+            else:
+                result_vals[i] = inches_val
+                converted = False
+        elif src_unit in _GROB_METRIC_TYPES:
+            # Evaluate grob metric → Unit, extract inches, convert
+            metric_unit = _eval_grob_metric(src_unit, x._data[i])
+            if (
+                metric_unit is not None
+                and len(metric_unit) > 0
+                and metric_unit._units[0] in _ABSOLUTE_UNIT_TYPES
+            ):
+                # Convert the measured value to inches first
+                src_inches = (
+                    metric_unit._values[0]
+                    * _INCHES_PER[metric_unit._units[0]]
+                )
+                # Apply the scale factor from the original unit
+                src_inches *= x._values[i]
+                if target in _ABSOLUTE_UNIT_TYPES:
+                    result_vals[i] = src_inches / _INCHES_PER[target]
+                else:
+                    result_vals[i] = src_inches
+                    converted = False
+            else:
+                result_vals[i] = x._values[i]
+                converted = False
         else:
-            # Context-dependent conversion -- deferred
-            result_vals[i] = x._values[i]
-            converted = False
+            # Context-dependent: try to resolve via active renderer
+            resolved = _try_resolve_with_renderer(
+                x, i, src_unit, target, axisFrom, typeFrom,
+            )
+            if resolved is not None:
+                result_vals[i] = resolved
+            else:
+                result_vals[i] = x._values[i]
+                converted = False
 
     if valueOnly:
         return result_vals
