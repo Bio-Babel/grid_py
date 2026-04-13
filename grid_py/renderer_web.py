@@ -399,6 +399,9 @@ class WebRenderer(GridRenderer):
     # ===================================================================== #
 
     def _append_node(self, node: SceneNode) -> None:
+        # Attach grob metadata if available (for tooltip data)
+        if self._current_grob_metadata and isinstance(node, GrobNode):
+            node.metadata = dict(self._current_grob_metadata)
         if self._path_collecting:
             self._path_buffer.append(node)
         else:
@@ -769,13 +772,24 @@ class WebRenderer(GridRenderer):
     def finish(self) -> None:
         pass  # No resources to release
 
-    # Convenience aliases
+    def get_surface(self) -> Any:
+        """WebRenderer has no Cairo surface; return ``None``."""
+        return None
+
     def write_to_png(self, filename: str) -> None:
+        """Not supported — WebRenderer produces HTML, not PNG.
+
+        Use :meth:`save` for HTML output.
+        """
         raise NotImplementedError(
             "WebRenderer produces HTML, not PNG. Use save() or to_html()."
         )
 
     def to_png_bytes(self) -> bytes:
+        """Not supported — WebRenderer produces HTML, not PNG.
+
+        Use :meth:`to_scene_json` or :meth:`to_html`.
+        """
         raise NotImplementedError(
             "WebRenderer produces HTML, not PNG. Use to_scene_json() or to_html()."
         )

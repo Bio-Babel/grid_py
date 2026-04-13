@@ -71,6 +71,26 @@ class GridRenderer(ABC):
         self._pen_x: float = 0.0
         self._pen_y: float = 0.0
 
+        # Grob metadata (tooltip data attachment for web renderers)
+        self._current_grob_metadata: Optional[dict] = None
+
+    # ===================================================================== #
+    # Grob metadata (data attachment for interactive features)              #
+    # ===================================================================== #
+
+    def set_grob_metadata(self, metadata: Optional[dict]) -> None:
+        """Set metadata for the next draw_* call (tooltip data, etc.).
+
+        Called by ``_render_grob`` before each drawing primitive.
+        Subclasses (e.g. WebRenderer) use this to attach data to scene
+        graph nodes.  CairoRenderer ignores it.
+        """
+        self._current_grob_metadata = metadata
+
+    def clear_grob_metadata(self) -> None:
+        """Clear grob metadata after the draw_* call completes."""
+        self._current_grob_metadata = None
+
     # ===================================================================== #
     # Public viewport-bounds API (replaces direct _vp_stack access)         #
     # ===================================================================== #

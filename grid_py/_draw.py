@@ -160,6 +160,11 @@ def _render_grob(
     if renderer is None:
         return
 
+    # Pass grob metadata to renderer for interactive data attachment
+    metadata = getattr(grob, "metadata", None)
+    if metadata is not None and hasattr(renderer, "set_grob_metadata"):
+        renderer.set_grob_metadata(metadata)
+
     cls = getattr(grob, "_grid_class", "grob")
 
     # ---- rect -----------------------------------------------------------
@@ -367,6 +372,10 @@ def _render_grob(
             f"_render_grob: unknown grob class '{cls}', skipping",
             stacklevel=2,
         )
+
+    # Clear grob metadata after rendering
+    if metadata is not None and hasattr(renderer, "clear_grob_metadata"):
+        renderer.clear_grob_metadata()
 
 
 # ---------------------------------------------------------------------------

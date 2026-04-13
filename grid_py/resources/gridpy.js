@@ -285,13 +285,21 @@ var gridpy = (function () {
         var p = node.props;
         var xs = p.x || [], ys = p.y || [];
         var r = (p.size || 1) * 2;
+        var gpar = node.gpar || {};
+        var colArr = Array.isArray(gpar.col) ? gpar.col : null;
+        var fillArr = Array.isArray(gpar.fill) ? gpar.fill : null;
+        var lwdArr = Array.isArray(gpar.lwd) ? gpar.lwd : null;
         var g = parentG.append("g").attr("class", "grob-points grob-interactive");
         for (var i = 0; i < xs.length; i++) {
             var c = g.append("circle")
                 .attr("cx", xs[i]).attr("cy", ys[i]).attr("r", r)
                 .attr("data-id", node.id)
                 .attr("data-index", i);
-            applyGparSvg(c, node.gpar);
+            // Apply base gpar, then override per-point if arrays
+            applyGparSvg(c, gpar);
+            if (colArr) c.attr("stroke", colArr[i % colArr.length] || "none");
+            if (fillArr) c.attr("fill", fillArr[i % fillArr.length] || "none");
+            if (lwdArr) c.attr("stroke-width", lwdArr[i % lwdArr.length]);
             if (node.data) {
                 var row = {};
                 for (var key in node.data) {
@@ -458,21 +466,44 @@ var gridpy = (function () {
         var ctx = state.ctx;
         var xs = node.props.x || [], ys = node.props.y || [];
         var r = (node.props.size || 1) * 2;
+        var gpar = node.gpar || {};
+        var colArr = Array.isArray(gpar.col) ? gpar.col : null;
+        var fillArr = Array.isArray(gpar.fill) ? gpar.fill : null;
+        var hasPerPointStyle = colArr || fillArr;
 
-        ctx.beginPath();
-        for (var i = 0; i < xs.length; i++) {
-            ctx.moveTo(xs[i] + r, ys[i]);
-            ctx.arc(xs[i], ys[i], r, 0, Math.PI * 2);
-            // Store for quadtree
-            state.canvasItems.push({
-                x: xs[i], y: ys[i], r: r,
-                id: node.id, index: i,
-                data: node.data ? extractRow(node.data, i) : null
-            });
-        }
-        ctx.fill();
-        if (node.gpar && parseColour(node.gpar.col)) {
-            ctx.stroke();
+        if (hasPerPointStyle) {
+            // Per-point rendering: each point gets its own fill/stroke
+            for (var i = 0; i < xs.length; i++) {
+                ctx.beginPath();
+                ctx.arc(xs[i], ys[i], r, 0, Math.PI * 2);
+                if (fillArr) ctx.fillStyle = fillArr[i % fillArr.length] || "rgba(0,0,0,0)";
+                ctx.fill();
+                if (colArr) {
+                    ctx.strokeStyle = colArr[i % colArr.length] || "rgba(0,0,0,0)";
+                    ctx.stroke();
+                }
+                state.canvasItems.push({
+                    x: xs[i], y: ys[i], r: r,
+                    id: node.id, index: i,
+                    data: node.data ? extractRow(node.data, i) : null
+                });
+            }
+        } else {
+            // Batch rendering: all points share one style
+            ctx.beginPath();
+            for (var j = 0; j < xs.length; j++) {
+                ctx.moveTo(xs[j] + r, ys[j]);
+                ctx.arc(xs[j], ys[j], r, 0, Math.PI * 2);
+                state.canvasItems.push({
+                    x: xs[j], y: ys[j], r: r,
+                    id: node.id, index: j,
+                    data: node.data ? extractRow(node.data, j) : null
+                });
+            }
+            ctx.fill();
+            if (gpar.col && parseColour(gpar.col)) {
+                ctx.stroke();
+            }
         }
     }
 
