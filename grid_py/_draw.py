@@ -318,31 +318,31 @@ def _render_grob(
     elif cls == "GridStroke":
         path_grob = getattr(grob, "path", None)
         if path_grob is not None and hasattr(renderer, "begin_path_collect"):
-            renderer._ctx.save()
+            renderer.save_state()
             renderer.begin_path_collect()
             _render_grob(path_grob, renderer, gp=gp)
             renderer.end_path_stroke(gp)
-            renderer._ctx.restore()
+            renderer.restore_state()
 
     elif cls == "GridFill":
         path_grob = getattr(grob, "path", None)
         rule = getattr(grob, "rule", "winding")
         if path_grob is not None and hasattr(renderer, "begin_path_collect"):
-            renderer._ctx.save()
+            renderer.save_state()
             renderer.begin_path_collect(rule=rule)
             _render_grob(path_grob, renderer, gp=gp)
             renderer.end_path_fill(gp)
-            renderer._ctx.restore()
+            renderer.restore_state()
 
     elif cls == "GridFillStroke":
         path_grob = getattr(grob, "path", None)
         rule = getattr(grob, "rule", "winding")
         if path_grob is not None and hasattr(renderer, "begin_path_collect"):
-            renderer._ctx.save()
+            renderer.save_state()
             renderer.begin_path_collect(rule=rule)
             _render_grob(path_grob, renderer, gp=gp)
             renderer.end_path_fill_stroke(gp)
-            renderer._ctx.restore()
+            renderer.restore_state()
 
     # ---- null / gTree / base grob – no-op --------------------------------
     elif cls in ("null", "grob", "gTree"):
@@ -1037,7 +1037,7 @@ def grid_locator(
         return None
 
     # Current viewport bounds in device coords: (x0, y0, pw, ph)
-    x0, y0, pw, ph, *_vp_rest = renderer._vp_stack[-1]
+    x0, y0, pw, ph = renderer.get_viewport_bounds()
     if pw == 0 or ph == 0:
         return None
 

@@ -247,27 +247,28 @@ def _try_resolve_with_renderer(
     except Exception:
         return None
 
-    if renderer is None or not hasattr(renderer, "_resolve_to_npc"):
+    if renderer is None or not hasattr(renderer, "resolve_to_npc"):
         return None
 
     # Build a single-element Unit for the source
     elem = Unit(x._values[i], src_unit, data=x._data[i])
     is_dim = type_ in ("dimension",)
 
-    # Resolve source → NPC
-    npc_val = renderer._resolve_to_npc(elem, axis=axis, is_dim=is_dim)
+    # Resolve source -> NPC
+    npc_val = renderer.resolve_to_npc(elem, axis=axis, is_dim=is_dim)
 
-    # Convert NPC → target
+    # Convert NPC -> target
     if target == "npc":
         return npc_val
     elif target in _ABSOLUTE_UNIT_TYPES:
-        # NPC → inches → target
-        vp_px = renderer._vp_stack[-1][2] if axis == "x" else renderer._vp_stack[-1][3]
+        # NPC -> inches -> target
+        _x0, _y0, vp_pw, vp_ph = renderer.get_viewport_bounds()
+        vp_px = vp_pw if axis == "x" else vp_ph
         vp_inches = vp_px / renderer.dpi
         inches = npc_val * vp_inches
         return inches / _INCHES_PER[target]
     else:
-        # Target is also context-dependent — just return the NPC value
+        # Target is also context-dependent -- just return the NPC value
         return npc_val
 
 

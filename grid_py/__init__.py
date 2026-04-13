@@ -129,6 +129,7 @@ from grid_py._group import (
 )
 
 # --- Renderer ---
+from grid_py._renderer_base import GridRenderer
 from grid_py.renderer import CairoRenderer
 
 # --- Drawing ---

@@ -294,7 +294,7 @@ def _rect_height_details(grob: Any) -> Unit:
 # inches in the current viewport context, then compute min/max.
 #
 # In grid_py we achieve the same by obtaining the active renderer
-# and calling ``renderer._resolve_to_npc()`` on each coordinate.
+# and calling ``renderer.resolve_to_npc()`` on each coordinate.
 
 
 def _get_renderer() -> Any:
@@ -319,14 +319,14 @@ def _locn_bounds_width(x_unit: Any, renderer: Any, gp: Any = None) -> float:
     npc_vals = []
     for i in range(len(x_unit)):
         elem = Unit(x_unit._values[i], x_unit._units[i], data=x_unit._data[i])
-        npc_vals.append(renderer._resolve_to_npc(elem, axis="x", is_dim=False, gp=gp))
+        npc_vals.append(renderer.resolve_to_npc(elem, axis="x", is_dim=False, gp=gp))
 
     if not npc_vals:
         return 0.0
     npc_width = max(npc_vals) - min(npc_vals)
     # Convert NPC width to inches
-    vp_px = renderer._vp_stack[-1][2]  # pw
-    return npc_width * vp_px / renderer.dpi
+    _x0, _y0, pw, _ph = renderer.get_viewport_bounds()
+    return npc_width * pw / renderer.dpi
 
 
 def _locn_bounds_height(y_unit: Any, renderer: Any, gp: Any = None) -> float:
@@ -341,13 +341,13 @@ def _locn_bounds_height(y_unit: Any, renderer: Any, gp: Any = None) -> float:
     npc_vals = []
     for i in range(len(y_unit)):
         elem = Unit(y_unit._values[i], y_unit._units[i], data=y_unit._data[i])
-        npc_vals.append(renderer._resolve_to_npc(elem, axis="y", is_dim=False, gp=gp))
+        npc_vals.append(renderer.resolve_to_npc(elem, axis="y", is_dim=False, gp=gp))
 
     if not npc_vals:
         return 0.0
     npc_height = max(npc_vals) - min(npc_vals)
-    vp_px = renderer._vp_stack[-1][3]  # ph
-    return npc_height * vp_px / renderer.dpi
+    _x0, _y0, _pw, ph = renderer.get_viewport_bounds()
+    return npc_height * ph / renderer.dpi
 
 
 # -- lines grob (R: primitives.R:186-200, uses C_locnBounds) ---------------
@@ -516,14 +516,14 @@ def _circle_width_details(grob: Any) -> Unit:
     if r_unit is not None and isinstance(r_unit, _Unit):
         for i in range(len(r_unit)):
             elem = _Unit(r_unit._values[i], r_unit._units[i], data=r_unit._data[i])
-            r_npc_arr.append(renderer._resolve_to_npc(elem, axis="x", is_dim=True, gp=gp))
+            r_npc_arr.append(renderer.resolve_to_npc(elem, axis="x", is_dim=True, gp=gp))
     if not r_npc_arr:
         r_npc_arr = [0.0]
 
     x_npc_arr = []
     for i in range(n):
         elem = _Unit(x_unit._values[i], x_unit._units[i], data=x_unit._data[i])
-        x_npc_arr.append(renderer._resolve_to_npc(elem, axis="x", is_dim=False, gp=gp))
+        x_npc_arr.append(renderer.resolve_to_npc(elem, axis="x", is_dim=False, gp=gp))
 
     # Compute bounding box with radius
     max_vals = []
@@ -534,8 +534,8 @@ def _circle_width_details(grob: Any) -> Unit:
         min_vals.append(x_npc_arr[i] - r_npc)
 
     npc_width = max(max_vals) - min(min_vals)
-    vp_px = renderer._vp_stack[-1][2]
-    return Unit(npc_width * vp_px / renderer.dpi, "inches")
+    _x0, _y0, vp_pw, _ph = renderer.get_viewport_bounds()
+    return Unit(npc_width * vp_pw / renderer.dpi, "inches")
 
 
 def _circle_height_details(grob: Any) -> Unit:
@@ -560,14 +560,14 @@ def _circle_height_details(grob: Any) -> Unit:
     if r_unit is not None and isinstance(r_unit, _Unit):
         for i in range(len(r_unit)):
             elem = _Unit(r_unit._values[i], r_unit._units[i], data=r_unit._data[i])
-            r_npc_arr.append(renderer._resolve_to_npc(elem, axis="y", is_dim=True, gp=gp))
+            r_npc_arr.append(renderer.resolve_to_npc(elem, axis="y", is_dim=True, gp=gp))
     if not r_npc_arr:
         r_npc_arr = [0.0]
 
     y_npc_arr = []
     for i in range(n):
         elem = _Unit(y_unit._values[i], y_unit._units[i], data=y_unit._data[i])
-        y_npc_arr.append(renderer._resolve_to_npc(elem, axis="y", is_dim=False, gp=gp))
+        y_npc_arr.append(renderer.resolve_to_npc(elem, axis="y", is_dim=False, gp=gp))
 
     max_vals = []
     min_vals = []
@@ -577,8 +577,8 @@ def _circle_height_details(grob: Any) -> Unit:
         min_vals.append(y_npc_arr[i] - r_npc)
 
     npc_height = max(max_vals) - min(min_vals)
-    vp_px = renderer._vp_stack[-1][3]
-    return Unit(npc_height * vp_px / renderer.dpi, "inches")
+    _x0, _y0, _pw, vp_ph = renderer.get_viewport_bounds()
+    return Unit(npc_height * vp_ph / renderer.dpi, "inches")
 
 
 # -- roundrect grob (same as rect: returns own width/height) ----------------
@@ -653,9 +653,9 @@ def _xspline_width_details(grob: Any) -> Unit:
             return Unit(0, "inches")
         renderer = _get_renderer()
         if renderer is not None:
-            vp_px = renderer._vp_stack[-1][2]
+            _, _, vp_pw, _ = renderer.get_viewport_bounds()
             npc_width = float(pts["x"].max() - pts["x"].min())
-            return Unit(npc_width * vp_px / renderer.dpi, "inches")
+            return Unit(npc_width * vp_pw / renderer.dpi, "inches")
         return Unit(float(pts["x"].max() - pts["x"].min()), "npc")
     except Exception:
         return Unit(0, "inches")
@@ -673,9 +673,9 @@ def _xspline_height_details(grob: Any) -> Unit:
             return Unit(0, "inches")
         renderer = _get_renderer()
         if renderer is not None:
-            vp_px = renderer._vp_stack[-1][3]
+            _, _, _, vp_ph = renderer.get_viewport_bounds()
             npc_height = float(pts["y"].max() - pts["y"].min())
-            return Unit(npc_height * vp_px / renderer.dpi, "inches")
+            return Unit(npc_height * vp_ph / renderer.dpi, "inches")
         return Unit(float(pts["y"].max() - pts["y"].min()), "npc")
     except Exception:
         return Unit(0, "inches")
@@ -698,9 +698,9 @@ def _bezier_width_details(grob: Any) -> Unit:
             return Unit(0, "inches")
         renderer = _get_renderer()
         if renderer is not None:
-            vp_px = renderer._vp_stack[-1][2]
+            _, _, vp_pw, _ = renderer.get_viewport_bounds()
             npc_width = float(pts["x"].max() - pts["x"].min())
-            return Unit(npc_width * vp_px / renderer.dpi, "inches")
+            return Unit(npc_width * vp_pw / renderer.dpi, "inches")
         return Unit(float(pts["x"].max() - pts["x"].min()), "npc")
     except Exception:
         return Unit(0, "inches")
@@ -718,9 +718,9 @@ def _bezier_height_details(grob: Any) -> Unit:
             return Unit(0, "inches")
         renderer = _get_renderer()
         if renderer is not None:
-            vp_px = renderer._vp_stack[-1][3]
+            _, _, _, vp_ph = renderer.get_viewport_bounds()
             npc_height = float(pts["y"].max() - pts["y"].min())
-            return Unit(npc_height * vp_px / renderer.dpi, "inches")
+            return Unit(npc_height * vp_ph / renderer.dpi, "inches")
         return Unit(float(pts["y"].max() - pts["y"].min()), "npc")
     except Exception:
         return Unit(0, "inches")

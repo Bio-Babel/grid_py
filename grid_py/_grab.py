@@ -399,8 +399,8 @@ def grid_cap(native: bool = True) -> Optional[np.ndarray]:
         except ImportError:
             # Fallback: read directly from Cairo surface if ImageSurface
             import cairo
-            surface = renderer._surface
-            if isinstance(surface, cairo.ImageSurface):
+            surface = renderer.get_surface() if hasattr(renderer, "get_surface") else None
+            if surface is not None and isinstance(surface, cairo.ImageSurface):
                 w = surface.get_width()
                 h = surface.get_height()
                 buf = surface.get_data()
