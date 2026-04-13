@@ -18,7 +18,7 @@ __all__ = [
 ]
 
 # Module-level cache for the default backend.
-_cached_backend: Optional[FontMetricsBackend] = None
+_cached_backend: Optional["FontMetricsBackend"] = None
 
 
 class FontMetricsBackend(ABC):
@@ -68,7 +68,7 @@ class CairoFontMetrics(FontMetricsBackend):
     """Text measurement using a Cairo context."""
 
     def __init__(self) -> None:
-        import cairo  # noqa: F811 – runtime import
+        import cairo
         self._cairo = cairo
         self._surface = cairo.ImageSurface(cairo.FORMAT_A8, 1, 1)
         self._ctx = cairo.Context(self._surface)
@@ -83,19 +83,19 @@ class CairoFontMetrics(FontMetricsBackend):
         weight = cairo.FONT_WEIGHT_NORMAL
 
         if fontface is not None:
-            if fontface == 2 or fontface == "bold":
+            if fontface in (2, "bold"):
                 weight = cairo.FONT_WEIGHT_BOLD
-            elif fontface == 3 or fontface == "italic":
+            elif fontface in (3, "italic"):
                 slant = cairo.FONT_SLANT_ITALIC
-            elif fontface == 4 or fontface == "bold.italic":
+            elif fontface in (4, "bold.italic"):
                 weight = cairo.FONT_WEIGHT_BOLD
                 slant = cairo.FONT_SLANT_ITALIC
 
         ctx.select_font_face(family or "sans-serif", slant, weight)
         ctx.set_font_size(fontsize * cex)
 
-        fe = ctx.font_extents()  # (ascent, descent, height, …)
-        te = ctx.text_extents(text)  # (x_bearing, y_bearing, width, height, …)
+        fe = ctx.font_extents()
+        te = ctx.text_extents(text)
 
         return {
             "ascent": fe[0] / 72.0,
@@ -105,47 +105,48 @@ class CairoFontMetrics(FontMetricsBackend):
 
 
 # ---------------------------------------------------------------------------
-# fonttools backend (reads glyph metrics from .ttf/.otf files)
+# fonttools backend
 # ---------------------------------------------------------------------------
 
 class FonttoolsMetrics(FontMetricsBackend):
     """Text measurement using fontTools to read glyph advances from font files.
 
     More accurate than heuristic estimation when pycairo is unavailable.
-    Requires the ``fontTools`` package and at least one TrueType/OpenType
-    font file on the system.
+    Raises ``ImportError`` if fontTools is not installed, or ``RuntimeError``
+    if no font files can be found on the system.
     """
 
     def __init__(self) -> None:
         from fontTools.ttLib import TTFont  # noqa: F401 — validate import
-        self._font_cache: dict = {}  # (family, bold, italic) -> TTFont
-        self._system_fonts: Optional[dict] = None  # lazy
+        self._font_cache: dict = {}
+        self._system_fonts: Optional[dict] = None
 
     def _find_system_fonts(self) -> dict:
-        """Build a map of family -> [(path, bold, italic), ...] from system fonts."""
+        """Build a map of family -> [(path, bold, italic), ...]."""
         if self._system_fonts is not None:
             return self._system_fonts
 
         import glob
         import os
+        from fontTools.ttLib import TTFont
 
         self._system_fonts = {}
         search_paths = []
-        # Conda env fonts
+
         conda_prefix = os.environ.get("CONDA_PREFIX", "")
         if conda_prefix:
             search_paths.append(os.path.join(conda_prefix, "fonts"))
             search_paths.append(os.path.join(conda_prefix, "lib", "fonts"))
-        # System paths
         search_paths.extend([
             "/usr/share/fonts", "/usr/local/share/fonts",
-            os.path.expanduser("~/.fonts"), os.path.expanduser("~/.local/share/fonts"),
+            os.path.expanduser("~/.fonts"),
+            os.path.expanduser("~/.local/share/fonts"),
         ])
-        # matplotlib fonts
+        # matplotlib bundled fonts (optional)
         try:
             import matplotlib
-            mpl_data = os.path.join(os.path.dirname(matplotlib.__file__), "mpl-data", "fonts", "ttf")
-            search_paths.append(mpl_data)
+            search_paths.append(os.path.join(
+                os.path.dirname(matplotlib.__file__), "mpl-data", "fonts", "ttf"))
         except ImportError:
             pass
 
@@ -154,31 +155,31 @@ class FonttoolsMetrics(FontMetricsBackend):
                 continue
             for pattern in ("**/*.ttf", "**/*.otf"):
                 for path in glob.glob(os.path.join(base, pattern), recursive=True):
+                    font = None
                     try:
-                        from fontTools.ttLib import TTFont
                         font = TTFont(path, lazy=True)
                         name_table = font["name"]
                         family = None
                         for record in name_table.names:
-                            if record.nameID == 1:  # Font Family name
-                                try:
-                                    family = record.toUnicode().lower()
-                                except Exception:
-                                    pass
+                            if record.nameID == 1:
+                                family = record.toUnicode().lower()
                                 break
                         if family:
                             os2 = font.get("OS/2")
-                            bold = False
-                            italic = False
-                            if os2:
-                                bold = bool(os2.fsSelection & 0x20)
-                                italic = bool(os2.fsSelection & 0x01)
-                            if family not in self._system_fonts:
-                                self._system_fonts[family] = []
-                            self._system_fonts[family].append((path, bold, italic))
-                        font.close()
+                            bold = bool(os2.fsSelection & 0x20) if os2 else False
+                            italic = bool(os2.fsSelection & 0x01) if os2 else False
+                            self._system_fonts.setdefault(family, []).append(
+                                (path, bold, italic))
                     except Exception:
-                        continue
+                        # Corrupt/unreadable font file — skip it
+                        pass
+                    finally:
+                        if font is not None:
+                            font.close()
+
+        if not self._system_fonts:
+            raise RuntimeError("FonttoolsMetrics: no font files found on this system")
+
         return self._system_fonts
 
     def _get_font(self, family: Optional[str], bold: bool, italic: bool):
@@ -190,52 +191,38 @@ class FonttoolsMetrics(FontMetricsBackend):
             return self._font_cache[key]
 
         fonts = self._find_system_fonts()
-
-        # Try exact family match
         family_lower = (family or "sans-serif").lower()
-        # Map common generic names
-        generic_map = {
-            "sans-serif": ["dejavu sans", "liberation sans", "arial", "helvetica",
-                           "source sans", "noto sans"],
+
+        # Generic family aliases
+        _GENERIC = {
+            "sans-serif": ["dejavu sans", "liberation sans", "arial",
+                           "helvetica", "source sans", "noto sans"],
             "serif": ["dejavu serif", "liberation serif", "times", "noto serif"],
             "mono": ["dejavu sans mono", "liberation mono", "courier",
                      "source code pro", "noto mono"],
             "monospace": ["dejavu sans mono", "liberation mono", "courier"],
         }
 
-        candidates = []
-        if family_lower in fonts:
-            candidates = fonts[family_lower]
-        else:
-            # Try generic family aliases
-            for alias in generic_map.get(family_lower, []):
-                if alias in fonts:
-                    candidates = fonts[alias]
+        candidates = fonts.get(family_lower)
+        if candidates is None:
+            for alias in _GENERIC.get(family_lower, []):
+                candidates = fonts.get(alias)
+                if candidates:
                     break
-            # Last resort: use any available font
-            if not candidates:
-                for fam_fonts in fonts.values():
-                    candidates = fam_fonts
-                    break
+        if candidates is None:
+            # Use any available font
+            candidates = next(iter(fonts.values()))
 
-        if not candidates:
-            self._font_cache[key] = None
-            return None
-
-        # Find best style match
+        # Best style match
         best = candidates[0]
         for path, b, i in candidates:
             if b == bold and i == italic:
                 best = (path, b, i)
                 break
 
-        try:
-            font = TTFont(best[0])
-            self._font_cache[key] = font
-            return font
-        except Exception:
-            self._font_cache[key] = None
-            return None
+        font = TTFont(best[0])
+        self._font_cache[key] = font
+        return font
 
     def measure(self, text: str, gp: Any = None) -> Dict[str, float]:
         family, fontsize, fontface, cex = _extract_font_params(gp)
@@ -245,43 +232,31 @@ class FonttoolsMetrics(FontMetricsBackend):
         italic = fontface in (3, "italic", "oblique", 4, "bold.italic")
 
         font = self._get_font(family, bold, italic)
-        if font is None:
-            # Fallback to heuristic
-            return HeuristicMetrics().measure(text, gp)
+        cmap = font.getBestCmap()
+        hmtx = font["hmtx"]
+        units_per_em = font["head"].unitsPerEm
 
-        try:
-            cmap = font.getBestCmap()
-            hmtx = font["hmtx"]
-            units_per_em = font["head"].unitsPerEm
-
-            # Width: sum of glyph advances
-            total_advance = 0
-            for char in text:
-                code = ord(char)
-                if code in cmap:
-                    glyph_name = cmap[code]
-                    advance, _ = hmtx[glyph_name]
-                    total_advance += advance
-                else:
-                    # Unknown glyph: use average width
-                    total_advance += units_per_em * 0.5
-
-            width_inches = (total_advance / units_per_em) * effective_size / 72.0
-
-            # Ascent/descent from OS/2 table
-            if "OS/2" in font:
-                os2 = font["OS/2"]
-                ascent = os2.sTypoAscender / units_per_em * effective_size / 72.0
-                descent = abs(os2.sTypoDescender) / units_per_em * effective_size / 72.0
+        total_advance = 0
+        for char in text:
+            code = ord(char)
+            if code in cmap:
+                advance, _ = hmtx[cmap[code]]
+                total_advance += advance
             else:
-                # Fallback from hhea
-                hhea = font["hhea"]
-                ascent = hhea.ascent / units_per_em * effective_size / 72.0
-                descent = abs(hhea.descent) / units_per_em * effective_size / 72.0
+                total_advance += units_per_em // 2
 
-            return {"ascent": ascent, "descent": descent, "width": width_inches}
-        except Exception:
-            return HeuristicMetrics().measure(text, gp)
+        width_inches = (total_advance / units_per_em) * effective_size / 72.0
+
+        if "OS/2" in font:
+            os2 = font["OS/2"]
+            ascent = os2.sTypoAscender / units_per_em * effective_size / 72.0
+            descent = abs(os2.sTypoDescender) / units_per_em * effective_size / 72.0
+        else:
+            hhea = font["hhea"]
+            ascent = hhea.ascent / units_per_em * effective_size / 72.0
+            descent = abs(hhea.descent) / units_per_em * effective_size / 72.0
+
+        return {"ascent": ascent, "descent": descent, "width": width_inches}
 
 
 # ---------------------------------------------------------------------------
@@ -304,13 +279,13 @@ class HeuristicMetrics(FontMetricsBackend):
 
 
 # ---------------------------------------------------------------------------
-# Factory / singleton accessor
+# Factory
 # ---------------------------------------------------------------------------
 
 def get_font_backend() -> FontMetricsBackend:
     """Return a cached :class:`FontMetricsBackend` instance.
 
-    Fallback chain: CairoFontMetrics > FonttoolsMetrics > HeuristicMetrics.
+    Tries CairoFontMetrics first, then FonttoolsMetrics, then HeuristicMetrics.
     """
     global _cached_backend
     if _cached_backend is not None:
@@ -319,17 +294,13 @@ def get_font_backend() -> FontMetricsBackend:
     try:
         _cached_backend = CairoFontMetrics()
         return _cached_backend
-    except (ImportError, Exception):
+    except ImportError:
         pass
 
     try:
-        ft = FonttoolsMetrics()
-        # Verify it can actually find fonts
-        result = ft.measure("X")
-        if result["width"] > 0:
-            _cached_backend = ft
-            return _cached_backend
-    except (ImportError, Exception):
+        _cached_backend = FonttoolsMetrics()
+        return _cached_backend
+    except (ImportError, RuntimeError):
         pass
 
     _cached_backend = HeuristicMetrics()

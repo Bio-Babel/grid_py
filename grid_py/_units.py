@@ -240,12 +240,9 @@ def _try_resolve_with_renderer(
     Returns the converted value in *target* units, or ``None`` if no
     renderer is available.
     """
-    try:
-        from ._state import get_state
-        state = get_state()
-        renderer = state.get_renderer() if hasattr(state, "get_renderer") else None
-    except Exception:
-        return None
+    from ._state import get_state
+    state = get_state()
+    renderer = state.get_renderer()
 
     if renderer is None or not hasattr(renderer, "resolve_to_npc"):
         return None

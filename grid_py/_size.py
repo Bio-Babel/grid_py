@@ -298,13 +298,10 @@ def _rect_height_details(grob: Any) -> Unit:
 
 
 def _get_renderer() -> Any:
-    """Return the active CairoRenderer, or ``None``."""
-    try:
-        from ._state import get_state
-        state = get_state()
-        return state.get_renderer() if hasattr(state, "get_renderer") else None
-    except Exception:
-        return None
+    """Return the active renderer, or ``None`` if none is bound."""
+    from ._state import get_state
+    state = get_state()
+    return state.get_renderer()
 
 
 def _locn_bounds_width(x_unit: Any, renderer: Any, gp: Any = None) -> float:

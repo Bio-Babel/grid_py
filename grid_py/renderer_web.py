@@ -184,54 +184,27 @@ gridpy.render(
 
 
 def _array_to_data_uri(image: Any) -> str:
-    """Convert a numpy image array to a base64 data URI (PNG)."""
+    """Convert a numpy image array to a base64 PNG data URI."""
+    from PIL import Image as PILImage
+
     img_array = np.asarray(image)
     if img_array.dtype != np.uint8:
         if img_array.max() <= 1.0:
             img_array = (img_array * 255).astype(np.uint8)
         else:
             img_array = img_array.astype(np.uint8)
-    try:
-        from PIL import Image
-        if img_array.ndim == 2:
-            pil_img = Image.fromarray(img_array, mode="L")
-        elif img_array.shape[2] == 3:
-            pil_img = Image.fromarray(img_array, mode="RGB")
-        else:
-            pil_img = Image.fromarray(img_array, mode="RGBA")
-        buf = io.BytesIO()
-        pil_img.save(buf, format="PNG")
-        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-        return f"data:image/png;base64,{b64}"
-    except ImportError:
-        # Fallback: manually encode a minimal valid PNG from raw RGBA data
-        import struct, zlib
-        if img_array.ndim == 2:
-            h_img, w_img = img_array.shape
-            rgba = np.stack([img_array]*3 + [np.full_like(img_array, 255)], axis=-1)
-        elif img_array.ndim == 3 and img_array.shape[2] == 3:
-            h_img, w_img = img_array.shape[:2]
-            rgba = np.concatenate(
-                [img_array, np.full((*img_array.shape[:2], 1), 255, dtype=np.uint8)],
-                axis=2)
-        elif img_array.ndim == 3 and img_array.shape[2] == 4:
-            h_img, w_img = img_array.shape[:2]
-            rgba = img_array
-        else:
-            return "data:image/png;base64,"
-        # Build minimal PNG (uncompressed)
-        def _png_chunk(chunk_type: bytes, data: bytes) -> bytes:
-            c = chunk_type + data
-            return struct.pack(">I", len(data)) + c + struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF)
-        sig = b"\x89PNG\r\n\x1a\n"
-        ihdr = struct.pack(">IIBBBBB", w_img, h_img, 8, 6, 0, 0, 0)
-        raw_rows = b""
-        for row in range(h_img):
-            raw_rows += b"\x00" + rgba[row].tobytes()
-        idat = zlib.compress(raw_rows)
-        png_bytes = sig + _png_chunk(b"IHDR", ihdr) + _png_chunk(b"IDAT", idat) + _png_chunk(b"IEND", b"")
-        b64 = base64.b64encode(png_bytes).decode("ascii")
-        return f"data:image/png;base64,{b64}"
+
+    if img_array.ndim == 2:
+        pil_img = PILImage.fromarray(img_array, mode="L")
+    elif img_array.shape[2] == 3:
+        pil_img = PILImage.fromarray(img_array, mode="RGB")
+    else:
+        pil_img = PILImage.fromarray(img_array, mode="RGBA")
+
+    buf = io.BytesIO()
+    pil_img.save(buf, format="PNG")
+    b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+    return f"data:image/png;base64,{b64}"
 
 
 # ---------------------------------------------------------------------------
@@ -676,23 +649,19 @@ class WebRenderer(GridRenderer):
 
     def render_mask(self, mask_grob: Any) -> Any:
         mask_id = self._id_gen.next("mask")
-        # Render mask grob into a sub scene graph
         sub = WebRenderer(
             width=self.width_in, height=self.height_in,
             dpi=self.dpi, default_hint="svg",
         )
+        from ._draw import grid_draw
+        from ._state import get_state
+        state = get_state()
+        orig = state._renderer
+        state._renderer = sub
         try:
-            from ._draw import grid_draw
-            from ._state import get_state
-            state = get_state()
-            orig = state._renderer
-            state._renderer = sub
-            try:
-                grid_draw(mask_grob, recording=False)
-            finally:
-                state._renderer = orig
-        except Exception:
-            pass
+            grid_draw(mask_grob, recording=False)
+        finally:
+            state._renderer = orig
         self._defs.masks.append({
             "id": mask_id,
             "content": sub._scene_root.to_dict(),
