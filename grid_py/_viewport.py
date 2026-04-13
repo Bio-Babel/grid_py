@@ -1010,8 +1010,27 @@ def up_viewport(n: int = 1, recording: bool = True) -> Optional[VpPath]:
     if n < 0:
         raise ValueError("must navigate up at least one viewport")
     state = _get_state()
+
+    # Capture the path segment being navigated (mirrors R grid.R:234-238).
+    # R returns the tail of the current path corresponding to the n levels
+    # being navigated away from.
+    up_path: Optional[VpPath] = None
+    path_str = state.current_vp_path()  # e.g. "ROOT/A/B"
+    if path_str:
+        parts = path_str.split("/")
+        # Remove "ROOT" prefix for VpPath (R doesn't include ROOT)
+        vp_parts = [p for p in parts if p != "ROOT"]
+        if n == 0:
+            # Navigate to root: return entire path
+            if vp_parts:
+                up_path = VpPath("/".join(vp_parts))
+        elif len(vp_parts) >= n:
+            tail = "/".join(vp_parts[-n:])
+            if tail:
+                up_path = VpPath(tail)
+
     state.up_viewport(n)
-    return None
+    return up_path
 
 
 def down_viewport(
