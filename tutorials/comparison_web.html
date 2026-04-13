@@ -1,0 +1,926 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+/* gridpy.css — Default styles for grid_py interactive HTML output */
+
+.gridpy-container {
+    position: relative;
+    display: inline-block;
+    overflow: hidden;
+    font-family: sans-serif;
+}
+
+.gridpy-container canvas,
+.gridpy-container svg {
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+/* SVG layer */
+.gridpy-svg {
+    z-index: 2;
+    pointer-events: none;
+}
+
+.gridpy-svg .grob-interactive {
+    pointer-events: all;
+}
+
+.gridpy-svg text {
+    pointer-events: none;
+    user-select: none;
+}
+
+/* Canvas layer */
+.gridpy-canvas {
+    z-index: 1;
+}
+
+/* Interaction overlay */
+.gridpy-overlay {
+    z-index: 3;
+    pointer-events: all;
+    fill: none;
+    stroke: none;
+}
+
+/* Tooltip */
+.gridpy-tooltip {
+    position: absolute;
+    pointer-events: none;
+    background: rgba(0, 0, 0, 0.8);
+    color: #fff;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    line-height: 1.4;
+    white-space: nowrap;
+    z-index: 100;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+.gridpy-tooltip.visible {
+    opacity: 1;
+}
+
+/* Brush selection */
+.gridpy-overlay .brush .selection {
+    fill: rgba(100, 149, 237, 0.2);
+    stroke: #6495ed;
+    stroke-width: 1;
+}
+
+/* Theme: light (default) */
+.gridpy-theme-light {
+    background: #ffffff;
+}
+
+/* Theme: dark */
+.gridpy-theme-dark {
+    background: #1e1e1e;
+}
+
+.gridpy-theme-dark .gridpy-tooltip {
+    background: rgba(255, 255, 255, 0.9);
+    color: #1e1e1e;
+}
+
+</style>
+</head>
+<body>
+<div id="gridpy-plot"></div>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+/**
+ * gridpy.js — Browser-side rendering runtime for grid_py WebRenderer.
+ *
+ * Reads a scene graph JSON and renders it to layered SVG + Canvas.
+ * Uses D3.js v7 for SVG manipulation and interactions (zoom, brush, tooltip).
+ *
+ * @version 0.1.0
+ * @license MIT
+ */
+var gridpy = (function () {
+    "use strict";
+
+    // ---- Configuration ---------------------------------------------------
+
+    var CANVAS_THRESHOLD = 2000; // Elements above this route to Canvas
+    var TOOLTIP_SEARCH_RADIUS = 10; // px
+
+    // ---- Gpar → CSS/Canvas style helpers ----------------------------------
+
+    function parseColour(c) {
+        if (!c || c === "transparent" || c === "NA" || c === "none") return null;
+        return c; // CSS can handle hex, named colours, rgba()
+    }
+
+    function applyGparSvg(sel, gpar) {
+        if (!gpar) return;
+        var fill = parseColour(gpar.fill);
+        var col = parseColour(gpar.col);
+        if (fill !== undefined) sel.attr("fill", fill || "none");
+        if (col !== undefined) sel.attr("stroke", col || "none");
+        if (gpar.lwd !== undefined) sel.attr("stroke-width", gpar.lwd);
+        if (gpar.alpha !== undefined) sel.attr("opacity", gpar.alpha);
+        if (gpar.lty) sel.attr("stroke-dasharray", ltyToDash(gpar.lty));
+        if (gpar.lineend) sel.attr("stroke-linecap", gpar.lineend);
+        if (gpar.linejoin) sel.attr("stroke-linejoin",
+            gpar.linejoin === "mitre" ? "miter" : gpar.linejoin);
+    }
+
+    function applyTextGparSvg(sel, gpar) {
+        if (!gpar) return;
+        var col = parseColour(gpar.col);
+        if (col) sel.attr("fill", col);
+        if (gpar.fontsize) sel.attr("font-size", gpar.fontsize + "px");
+        if (gpar.fontfamily) sel.attr("font-family", gpar.fontfamily);
+        if (gpar.fontface) {
+            var face = gpar.fontface;
+            if (face === "bold" || face === 2) sel.attr("font-weight", "bold");
+            else if (face === "italic" || face === 3) sel.attr("font-style", "italic");
+            else if (face === "bold.italic" || face === 4) {
+                sel.attr("font-weight", "bold").attr("font-style", "italic");
+            }
+        }
+        if (gpar.alpha !== undefined) sel.attr("opacity", gpar.alpha);
+    }
+
+    function applyGparCanvas(ctx, gpar) {
+        if (!gpar) return;
+        var fill = parseColour(gpar.fill);
+        var col = parseColour(gpar.col);
+        ctx.fillStyle = fill || "rgba(0,0,0,0)";
+        ctx.strokeStyle = col || "rgba(0,0,0,0)";
+        ctx.lineWidth = gpar.lwd || 1;
+        ctx.globalAlpha = gpar.alpha !== undefined ? gpar.alpha : 1.0;
+        if (gpar.lineend) ctx.lineCap = gpar.lineend;
+        if (gpar.linejoin) ctx.lineJoin =
+            gpar.linejoin === "mitre" ? "miter" : (gpar.linejoin || "round");
+        if (gpar.lty) {
+            var dash = ltyToDashArray(gpar.lty);
+            ctx.setLineDash(dash || []);
+        } else {
+            ctx.setLineDash([]);
+        }
+    }
+
+    function ltyToDash(lty) {
+        var map = {
+            "dashed": "6,4", "dotted": "2,2",
+            "dotdash": "2,2,6,2", "longdash": "10,3",
+            "twodash": "5,2,10,2", "blank": "0,100"
+        };
+        return map[lty] || null;
+    }
+
+    function ltyToDashArray(lty) {
+        var map = {
+            "dashed": [6, 4], "dotted": [2, 2],
+            "dotdash": [2, 2, 6, 2], "longdash": [10, 3],
+            "twodash": [5, 2, 10, 2], "blank": [0, 100]
+        };
+        return map[lty] || [];
+    }
+
+    function hjustToAnchor(hj) {
+        if (hj <= 0.2) return "start";
+        if (hj >= 0.8) return "end";
+        return "middle";
+    }
+
+    function vjustToBaseline(vj) {
+        if (vj <= 0.2) return "text-after-edge";
+        if (vj >= 0.8) return "text-before-edge";
+        return "central";
+    }
+
+    // ---- Gradient/pattern → SVG defs --------------------------------------
+
+    function createDefs(defsSel, defsData) {
+        if (!defsData) return;
+
+        // Clip paths
+        (defsData.clip_paths || []).forEach(function (cp) {
+            defsSel.append("clipPath").attr("id", cp.id)
+                .append("rect")
+                .attr("x", cp.x).attr("y", cp.y)
+                .attr("width", cp.w).attr("height", cp.h);
+        });
+
+        // Linear / radial gradients
+        (defsData.gradients || []).forEach(function (g) {
+            var el;
+            if (g.type === "linear") {
+                el = defsSel.append("linearGradient").attr("id", g.id)
+                    .attr("x1", g.x1).attr("y1", g.y1)
+                    .attr("x2", g.x2).attr("y2", g.y2)
+                    .attr("gradientUnits", "userSpaceOnUse");
+            } else {
+                el = defsSel.append("radialGradient").attr("id", g.id)
+                    .attr("cx", g.cx2).attr("cy", g.cy2).attr("r", g.r2)
+                    .attr("fx", g.cx1).attr("fy", g.cy1).attr("fr", g.r1)
+                    .attr("gradientUnits", "userSpaceOnUse");
+            }
+            if (g.colours && g.stops) {
+                for (var i = 0; i < g.colours.length; i++) {
+                    el.append("stop")
+                        .attr("offset", g.stops[i])
+                        .attr("stop-color", g.colours[i]);
+                }
+            }
+        });
+
+        // Patterns
+        (defsData.patterns || []).forEach(function (p) {
+            defsSel.append("pattern").attr("id", p.id)
+                .attr("x", p.x || 0).attr("y", p.y || 0)
+                .attr("width", p.width).attr("height", p.height)
+                .attr("patternUnits", "userSpaceOnUse")
+                .html(p.content || "");
+        });
+
+        // Masks
+        (defsData.masks || []).forEach(function (m) {
+            var mask = defsSel.append("mask").attr("id", m.id);
+            if (m.content && m.content.children) {
+                m.content.children.forEach(function (child) {
+                    renderSvgNode(child, mask);
+                });
+            }
+        });
+    }
+
+    // ---- Routing ----------------------------------------------------------
+
+    function routeToLayer(node) {
+        if (node.render_hint === "svg") return "svg";
+        if (node.render_hint === "canvas") return "canvas";
+        // Auto-routing
+        if (node.type === "text") return "svg";
+        if (node.type === "raster") return "svg";
+        if (node.type === "points") {
+            var n = node.props.x ? node.props.x.length : 0;
+            return n > CANVAS_THRESHOLD ? "canvas" : "svg";
+        }
+        return "svg";
+    }
+
+    // ---- SVG rendering ----------------------------------------------------
+
+    function renderSvgNode(node, parentG) {
+        if (!node) return;
+        if (node.type === "viewport") {
+            renderSvgViewport(node, parentG);
+        } else {
+            drawSvgGrub(node, parentG);
+        }
+    }
+
+    function renderSvgViewport(vpNode, parentG) {
+        var g = parentG.append("g")
+            .attr("class", "vp-" + (vpNode.name || ""))
+            .attr("data-viewport", vpNode.name || "");
+        if (vpNode.clip_id) {
+            g.attr("clip-path", "url(#" + vpNode.clip_id + ")");
+        }
+        if (vpNode.mask_id) {
+            g.attr("mask", "url(#" + vpNode.mask_id + ")");
+        }
+        (vpNode.children || []).forEach(function (child) {
+            renderSvgNode(child, g);
+        });
+    }
+
+    function drawSvgGrub(node, parentG) {
+        var p = node.props || {};
+        switch (node.type) {
+            case "rect":
+                parentG.append("rect")
+                    .attr("x", p.x).attr("y", p.y)
+                    .attr("width", p.w).attr("height", p.h)
+                    .attr("data-id", node.id)
+                    .call(applyGparSvg, node.gpar);
+                break;
+
+            case "roundrect":
+                parentG.append("rect")
+                    .attr("x", p.x).attr("y", p.y)
+                    .attr("width", p.w).attr("height", p.h)
+                    .attr("rx", p.r || 0).attr("ry", p.r || 0)
+                    .attr("data-id", node.id)
+                    .call(applyGparSvg, node.gpar);
+                break;
+
+            case "circle":
+                parentG.append("circle")
+                    .attr("cx", p.x).attr("cy", p.y).attr("r", p.r)
+                    .attr("data-id", node.id)
+                    .call(applyGparSvg, node.gpar);
+                break;
+
+            case "text":
+                var txt = parentG.append("text")
+                    .attr("x", p.x).attr("y", p.y)
+                    .attr("text-anchor", hjustToAnchor(p.hjust || 0.5))
+                    .attr("dominant-baseline", vjustToBaseline(p.vjust || 0.5))
+                    .text(p.label || "")
+                    .attr("data-id", node.id)
+                    .call(applyTextGparSvg, node.gpar);
+                if (p.rot) {
+                    txt.attr("transform",
+                        "rotate(" + (-p.rot) + "," + p.x + "," + p.y + ")");
+                }
+                break;
+
+            case "points":
+                drawSvgPoints(node, parentG);
+                break;
+
+            case "polyline":
+            case "lines":
+                drawSvgPolyline(node, parentG);
+                break;
+
+            case "segments":
+                drawSvgSegments(node, parentG);
+                break;
+
+            case "polygon":
+                drawSvgPolygon(node, parentG);
+                break;
+
+            case "path":
+                drawSvgPath(node, parentG);
+                break;
+
+            case "raster":
+                parentG.append("image")
+                    .attr("x", p.x).attr("y", p.y)
+                    .attr("width", p.w).attr("height", p.h)
+                    .attr("href", p.src)
+                    .attr("preserveAspectRatio", "none")
+                    .attr("data-id", node.id);
+                break;
+
+            case "compound_stroke":
+            case "compound_fill":
+            case "compound_fill_stroke":
+                drawSvgCompound(node, parentG);
+                break;
+
+            default:
+                break;
+        }
+    }
+
+    function drawSvgPoints(node, parentG) {
+        var p = node.props;
+        var xs = p.x || [], ys = p.y || [];
+        var r = (p.size || 1) * 2;
+        var gpar = node.gpar || {};
+        var colArr = Array.isArray(gpar.col) ? gpar.col : null;
+        var fillArr = Array.isArray(gpar.fill) ? gpar.fill : null;
+        var lwdArr = Array.isArray(gpar.lwd) ? gpar.lwd : null;
+        var g = parentG.append("g").attr("class", "grob-points grob-interactive");
+        for (var i = 0; i < xs.length; i++) {
+            var c = g.append("circle")
+                .attr("cx", xs[i]).attr("cy", ys[i]).attr("r", r)
+                .attr("data-id", node.id)
+                .attr("data-index", i);
+            // Apply base gpar, then override per-point if arrays
+            applyGparSvg(c, gpar);
+            if (colArr) c.attr("stroke", colArr[i % colArr.length] || "none");
+            if (fillArr) c.attr("fill", fillArr[i % fillArr.length] || "none");
+            if (lwdArr) c.attr("stroke-width", lwdArr[i % lwdArr.length]);
+            if (node.data) {
+                var row = {};
+                for (var key in node.data) {
+                    row[key] = Array.isArray(node.data[key])
+                        ? node.data[key][i] : node.data[key];
+                }
+                c.attr("data-row", JSON.stringify(row));
+            }
+        }
+    }
+
+    function pointsToSvg(xs, ys) {
+        var parts = [];
+        for (var i = 0; i < xs.length; i++) {
+            parts.push(xs[i] + "," + ys[i]);
+        }
+        return parts.join(" ");
+    }
+
+    function drawSvgPolyline(node, parentG) {
+        var p = node.props;
+        if (p.groups) {
+            p.groups.forEach(function (grp) {
+                parentG.append("polyline")
+                    .attr("points", pointsToSvg(grp.x, grp.y))
+                    .attr("fill", "none")
+                    .call(applyGparSvg, node.gpar);
+            });
+        } else {
+            parentG.append("polyline")
+                .attr("points", pointsToSvg(p.x || [], p.y || []))
+                .attr("fill", "none")
+                .call(applyGparSvg, node.gpar);
+        }
+    }
+
+    function drawSvgSegments(node, parentG) {
+        var p = node.props;
+        var x0s = p.x0 || [], y0s = p.y0 || [];
+        var x1s = p.x1 || [], y1s = p.y1 || [];
+        for (var i = 0; i < x0s.length; i++) {
+            parentG.append("line")
+                .attr("x1", x0s[i]).attr("y1", y0s[i])
+                .attr("x2", x1s[i]).attr("y2", y1s[i])
+                .call(applyGparSvg, node.gpar);
+        }
+    }
+
+    function drawSvgPolygon(node, parentG) {
+        var p = node.props;
+        parentG.append("polygon")
+            .attr("points", pointsToSvg(p.x || [], p.y || []))
+            .call(applyGparSvg, node.gpar);
+    }
+
+    function drawSvgPath(node, parentG) {
+        var p = node.props;
+        if (p.d) {
+            parentG.append("path").attr("d", p.d)
+                .attr("fill-rule", p.rule === "evenodd" ? "evenodd" : "nonzero")
+                .call(applyGparSvg, node.gpar);
+        } else if (p.groups) {
+            var d = "";
+            p.groups.forEach(function (grp) {
+                for (var i = 0; i < grp.x.length; i++) {
+                    d += (i === 0 ? "M" : "L") + grp.x[i] + "," + grp.y[i];
+                }
+                d += "Z";
+            });
+            parentG.append("path").attr("d", d)
+                .attr("fill-rule", p.rule === "evenodd" ? "evenodd" : "nonzero")
+                .call(applyGparSvg, node.gpar);
+        }
+    }
+
+    function drawSvgCompound(node, parentG) {
+        // compound_stroke / compound_fill / compound_fill_stroke
+        // Render sub-paths as a combined <path>
+        var subPaths = (node.props || {}).sub_paths || [];
+        var g = parentG.append("g").attr("class", "compound-path");
+        subPaths.forEach(function (sub) {
+            drawSvgGrub(sub, g);
+        });
+        // Apply overall stroke/fill from the compound node's gpar
+        applyGparSvg(g, node.gpar);
+    }
+
+    // ---- Canvas rendering -------------------------------------------------
+
+    function drawCanvasNode(node, state) {
+        if (!node) return;
+        var ctx = state.ctx;
+        if (node.type === "viewport") {
+            ctx.save();
+            if (node.clip) {
+                var t = node.transform || {};
+                ctx.beginPath();
+                ctx.rect(t.x0 || 0, t.y0 || 0, t.w || 0, t.h || 0);
+                ctx.clip();
+            }
+            (node.children || []).forEach(function (child) {
+                drawCanvasNodeRouted(child, state);
+            });
+            ctx.restore();
+        } else {
+            drawCanvasPrimitive(node, state);
+        }
+    }
+
+    function drawCanvasNodeRouted(node, state) {
+        if (!node) return;
+        if (node.type === "viewport") {
+            drawCanvasNode(node, state);
+            return;
+        }
+        var layer = routeToLayer(node);
+        if (layer === "canvas") {
+            drawCanvasPrimitive(node, state);
+        }
+        // SVG items are handled separately in the SVG pass
+    }
+
+    function drawCanvasPrimitive(node, state) {
+        var ctx = state.ctx;
+        var p = node.props || {};
+        ctx.save();
+        applyGparCanvas(ctx, node.gpar);
+
+        switch (node.type) {
+            case "points":
+                drawCanvasPoints(node, state);
+                break;
+            case "rect":
+                ctx.beginPath();
+                ctx.rect(p.x, p.y, p.w, p.h);
+                if (ctx.fillStyle !== "rgba(0,0,0,0)") ctx.fill();
+                if (ctx.strokeStyle !== "rgba(0,0,0,0)") ctx.stroke();
+                break;
+            case "circle":
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+                break;
+            case "polygon":
+                if (p.x && p.x.length >= 3) {
+                    ctx.beginPath();
+                    ctx.moveTo(p.x[0], p.y[0]);
+                    for (var i = 1; i < p.x.length; i++) {
+                        ctx.lineTo(p.x[i], p.y[i]);
+                    }
+                    ctx.closePath();
+                    ctx.fill();
+                    ctx.stroke();
+                }
+                break;
+            default:
+                break;
+        }
+        ctx.restore();
+    }
+
+    function drawCanvasPoints(node, state) {
+        var ctx = state.ctx;
+        var xs = node.props.x || [], ys = node.props.y || [];
+        var r = (node.props.size || 1) * 2;
+        var gpar = node.gpar || {};
+        var colArr = Array.isArray(gpar.col) ? gpar.col : null;
+        var fillArr = Array.isArray(gpar.fill) ? gpar.fill : null;
+        var hasPerPointStyle = colArr || fillArr;
+
+        if (hasPerPointStyle) {
+            // Per-point rendering: each point gets its own fill/stroke
+            for (var i = 0; i < xs.length; i++) {
+                ctx.beginPath();
+                ctx.arc(xs[i], ys[i], r, 0, Math.PI * 2);
+                if (fillArr) ctx.fillStyle = fillArr[i % fillArr.length] || "rgba(0,0,0,0)";
+                ctx.fill();
+                if (colArr) {
+                    ctx.strokeStyle = colArr[i % colArr.length] || "rgba(0,0,0,0)";
+                    ctx.stroke();
+                }
+                state.canvasItems.push({
+                    x: xs[i], y: ys[i], r: r,
+                    id: node.id, index: i,
+                    data: node.data ? extractRow(node.data, i) : null
+                });
+            }
+        } else {
+            // Batch rendering: all points share one style
+            ctx.beginPath();
+            for (var j = 0; j < xs.length; j++) {
+                ctx.moveTo(xs[j] + r, ys[j]);
+                ctx.arc(xs[j], ys[j], r, 0, Math.PI * 2);
+                state.canvasItems.push({
+                    x: xs[j], y: ys[j], r: r,
+                    id: node.id, index: j,
+                    data: node.data ? extractRow(node.data, j) : null
+                });
+            }
+            ctx.fill();
+            if (gpar.col && parseColour(gpar.col)) {
+                ctx.stroke();
+            }
+        }
+    }
+
+    function extractRow(data, i) {
+        var row = {};
+        for (var key in data) {
+            row[key] = Array.isArray(data[key]) ? data[key][i] : data[key];
+        }
+        return row;
+    }
+
+    // ---- Quadtree (simple implementation, no D3 dependency) ---------------
+
+    function SimpleQuadtree(items) {
+        this.items = items;
+    }
+
+    SimpleQuadtree.prototype.find = function (x, y, radius) {
+        var best = null, bestDist = radius * radius;
+        for (var i = 0; i < this.items.length; i++) {
+            var it = this.items[i];
+            var dx = it.x - x, dy = it.y - y;
+            var d2 = dx * dx + dy * dy;
+            if (d2 < bestDist) {
+                bestDist = d2;
+                best = it;
+            }
+        }
+        return best;
+    };
+
+    // If D3 quadtree is available, use it for better performance
+    function buildQuadtree(items) {
+        if (typeof d3 !== "undefined" && d3.quadtree) {
+            return d3.quadtree()
+                .x(function (d) { return d.x; })
+                .y(function (d) { return d.y; })
+                .addAll(items);
+        }
+        return new SimpleQuadtree(items);
+    }
+
+    // ---- Interactions -----------------------------------------------------
+
+    function bindInteractions(state, options) {
+        if (!options.interactive) return;
+
+        // Tooltip
+        if (options.tooltip !== false) {
+            bindTooltip(state);
+        }
+
+        // Zoom / Pan (requires D3)
+        if (options.zoom !== false && typeof d3 !== "undefined" && d3.zoom) {
+            bindZoom(state, options);
+        }
+
+        // Brush selection (requires D3)
+        if (options.brush && typeof d3 !== "undefined" && d3.brush) {
+            bindBrush(state, options);
+        }
+    }
+
+    function bindTooltip(state) {
+        var tooltip = state.tooltip;
+        var container = state.container;
+
+        container.addEventListener("mousemove", function (event) {
+            var rect = container.getBoundingClientRect();
+            var mx = event.clientX - rect.left;
+            var my = event.clientY - rect.top;
+
+            // Check SVG elements first
+            var svgEl = document.elementFromPoint(event.clientX, event.clientY);
+            if (svgEl && svgEl.dataset && svgEl.dataset.row) {
+                var rowData = JSON.parse(svgEl.dataset.row);
+                showTooltip(tooltip, rowData, mx, my, container);
+                return;
+            }
+
+            // Check Canvas via quadtree
+            if (state.quadtree) {
+                var nearest = state.quadtree.find(mx, my, TOOLTIP_SEARCH_RADIUS);
+                if (nearest && nearest.data) {
+                    showTooltip(tooltip, nearest.data, mx, my, container);
+                    return;
+                }
+            }
+
+            hideTooltip(tooltip);
+        });
+
+        container.addEventListener("mouseleave", function () {
+            hideTooltip(tooltip);
+        });
+    }
+
+    function showTooltip(tooltip, data, mx, my, container) {
+        var lines = [];
+        for (var key in data) {
+            lines.push("<b>" + key + "</b>: " + data[key]);
+        }
+        tooltip.innerHTML = lines.join("<br>");
+        tooltip.classList.add("visible");
+        // Position: offset from cursor
+        var tw = tooltip.offsetWidth || 100;
+        var th = tooltip.offsetHeight || 30;
+        var cw = container.offsetWidth;
+        var left = mx + 12;
+        var top = my - th - 8;
+        if (left + tw > cw) left = mx - tw - 12;
+        if (top < 0) top = my + 12;
+        tooltip.style.left = left + "px";
+        tooltip.style.top = top + "px";
+    }
+
+    function hideTooltip(tooltip) {
+        tooltip.classList.remove("visible");
+    }
+
+    function bindZoom(state, options) {
+        var zoomExtent = options.zoomExtent || [0.5, 20];
+        var zoom = d3.zoom()
+            .scaleExtent(zoomExtent)
+            .on("zoom", function (event) {
+                // SVG layer
+                state.svgRoot.attr("transform", event.transform);
+                // Canvas layer: redraw
+                redrawCanvas(state, event.transform);
+            });
+        d3.select(state.overlay).call(zoom);
+    }
+
+    function redrawCanvas(state, transform) {
+        var ctx = state.ctx;
+        var w = state.width, h = state.height;
+        ctx.save();
+        ctx.clearRect(0, 0, w, h);
+        if (transform) {
+            ctx.translate(transform.x, transform.y);
+            ctx.scale(transform.k, transform.k);
+        }
+        // Re-draw all canvas items
+        state.canvasItems.forEach(function (item) {
+            ctx.beginPath();
+            ctx.arc(item.x, item.y, item.r, 0, Math.PI * 2);
+            ctx.fill();
+        });
+        ctx.restore();
+    }
+
+    function bindBrush(state, options) {
+        var brush = d3.brush()
+            .extent([[0, 0], [state.width, state.height]])
+            .on("end", function (event) {
+                if (!event.selection) {
+                    emitEvent(state, "brush", { selected: [] });
+                    return;
+                }
+                var sel = event.selection;
+                var x0 = sel[0][0], y0 = sel[0][1];
+                var x1 = sel[1][0], y1 = sel[1][1];
+                var selected = queryRegion(state, x0, y0, x1, y1);
+                emitEvent(state, "brush", { selected: selected });
+            });
+
+        d3.select(state.overlay).append("g")
+            .attr("class", "brush")
+            .call(brush);
+    }
+
+    function queryRegion(state, x0, y0, x1, y1) {
+        var result = [];
+        state.canvasItems.forEach(function (item) {
+            if (item.x >= x0 && item.x <= x1 && item.y >= y0 && item.y <= y1) {
+                result.push(item);
+            }
+        });
+        return result;
+    }
+
+    function emitEvent(state, name, detail) {
+        var event = new CustomEvent("gridpy:" + name, { detail: detail });
+        state.container.dispatchEvent(event);
+    }
+
+    // ---- Main render entry point ------------------------------------------
+
+    function render(container, sceneGraph, options) {
+        options = options || {};
+        if (options.interactive === undefined) options.interactive = true;
+        var theme = options.theme || "light";
+
+        var sg = (typeof sceneGraph === "string")
+            ? JSON.parse(sceneGraph) : sceneGraph;
+        var w = sg.width, h = sg.height;
+
+        // Setup container
+        if (typeof container === "string") {
+            container = document.getElementById(container)
+                || document.querySelector(container);
+        }
+        container.innerHTML = "";
+        container.classList.add("gridpy-container", "gridpy-theme-" + theme);
+        container.style.width = w + "px";
+        container.style.height = h + "px";
+
+        // Canvas layer
+        var canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        canvas.className = "gridpy-canvas";
+        container.appendChild(canvas);
+        var ctx = canvas.getContext("2d");
+
+        // SVG layer
+        var svgNS = "http://www.w3.org/2000/svg";
+        var svgEl = document.createElementNS(svgNS, "svg");
+        svgEl.setAttribute("width", w);
+        svgEl.setAttribute("height", h);
+        svgEl.setAttribute("class", "gridpy-svg");
+        container.appendChild(svgEl);
+
+        var svg = (typeof d3 !== "undefined") ? d3.select(svgEl) : null;
+        var defs = svg ? svg.append("defs") : null;
+        var svgRoot = svg ? svg.append("g").attr("class", "gridpy-root") : null;
+
+        // Create defs
+        if (defs) createDefs(defs, sg.defs);
+
+        // Interaction overlay (transparent SVG)
+        var overlayEl = document.createElementNS(svgNS, "svg");
+        overlayEl.setAttribute("width", w);
+        overlayEl.setAttribute("height", h);
+        overlayEl.setAttribute("class", "gridpy-overlay");
+        container.appendChild(overlayEl);
+
+        // Tooltip
+        var tooltip = document.createElement("div");
+        tooltip.className = "gridpy-tooltip";
+        container.appendChild(tooltip);
+
+        var state = {
+            container: container,
+            canvas: canvas,
+            ctx: ctx,
+            svg: svg,
+            svgRoot: svgRoot,
+            overlay: overlayEl,
+            tooltip: tooltip,
+            width: w,
+            height: h,
+            dpi: sg.dpi || 150,
+            canvasItems: [],
+            quadtree: null,
+            sceneGraph: sg
+        };
+
+        // Render SVG pass
+        if (svgRoot && sg.root) {
+            renderTree(sg.root, state, svgRoot);
+        }
+
+        // Render Canvas pass (only canvas-routed items)
+        if (sg.root) {
+            drawCanvasNode(sg.root, state);
+        }
+
+        // Build quadtree for Canvas hit-testing
+        if (state.canvasItems.length > 0) {
+            state.quadtree = buildQuadtree(state.canvasItems);
+        }
+
+        // Bind interactions
+        bindInteractions(state, options);
+
+        return state;
+    }
+
+    function renderTree(node, state, parentG) {
+        if (!node) return;
+        if (node.type === "viewport") {
+            var g = parentG.append("g")
+                .attr("class", "vp-" + (node.name || ""))
+                .attr("data-viewport", node.name || "");
+            if (node.clip_id) {
+                g.attr("clip-path", "url(#" + node.clip_id + ")");
+            }
+            if (node.mask_id) {
+                g.attr("mask", "url(#" + node.mask_id + ")");
+            }
+            (node.children || []).forEach(function (child) {
+                renderTree(child, state, g);
+            });
+        } else {
+            var layer = routeToLayer(node);
+            if (layer === "svg") {
+                drawSvgGrub(node, parentG);
+            }
+            // Canvas items are drawn in a separate pass
+        }
+    }
+
+    // ---- Public API -------------------------------------------------------
+
+    return {
+        render: render,
+        CANVAS_THRESHOLD: CANVAS_THRESHOLD,
+        version: "0.1.0"
+    };
+
+})();
+
+</script>
+<script>
+gridpy.render(
+    document.getElementById("gridpy-plot"),
+    {"version": 1, "width": 800, "height": 400, "dpi": 100, "root": {"id": "vp-0", "type": "viewport", "children": [{"id": "grob-1", "type": "rect", "children": [], "props": {"x": 0.0, "y": 0.0, "w": 800.0, "h": 400.0}, "gpar": {"col": "#d0d7de", "fill": "#fafbfc"}, "render_hint": "auto"}, {"id": "grob-2", "type": "text", "children": [], "props": {"x": 400.0, "y": 16.000000000000014, "label": "Rendered by WebRenderer", "rot": 0.0, "hjust": 0.5, "vjust": 0.5}, "gpar": {"col": "#24292f", "fontsize": 14.0}, "render_hint": "svg"}, {"id": "vp-3", "type": "viewport", "children": [{"id": "vp-4", "type": "viewport", "children": [{"id": "grob-5", "type": "rect", "children": [], "props": {"x": 13.99999999999999, "y": 13.999999999999968, "w": 372.0, "h": 372.0}, "gpar": {"col": "#d0d7de", "fill": "white"}, "render_hint": "auto"}, {"id": "grob-6", "type": "points", "children": [], "metadata": {"group": ["B", "B", "A", "B", "B", "A", "C", "B", "C", "A", "B", "A", "C", "A", "A", "C", "A", "C", "B", "A", "A", "A", "A", "A", "A", "B", "A", "A", "A", "C", "C", "B", "B", "A", "C", "C", "B", "C", "C", "A"], "x": ["0.64", "0.33", "0.29", "0.53", "0.66", "0.44", "0.86", "0.63", "0.48", "0.41", "0.38", "0.67", "0.45", "0.16", "0.42", "0.67", "0.26", "0.25", "0.52", "0.52", "0.60", "0.76", "0.66", "0.58", "0.66", "0.36", "0.39", "0.29", "0.34", "0.59", "0.19", "0.45", "0.44", "0.49", "0.44", "0.35", "0.44", "0.79", "0.83", "0.50"], "y": ["0.56", "0.23", "0.36", "0.42", "0.71", "0.31", "0.46", "0.79", "0.49", "0.55", "0.23", "0.69", "0.54", "0.50", "0.37", "0.35", "0.42", "0.59", "0.72", "0.48", "0.59", "0.53", "0.56", "0.59", "0.70", "0.20", "0.65", "0.31", "0.28", "0.52", "0.21", "0.73", "0.56", "0.62", "0.16", "0.54", "0.51", "0.25", "0.25", "0.60"]}, "props": {"x": [256.9407556793585, 133.84180048511385, 116.05543606926094, 213.39443072486736, 263.84069093566893, 174.93193803733828, 342.2292595153846, 253.448921575459, 192.27957044530828, 165.63525545824515, 150.95340484526082, 266.71491221521245, 179.57167340388733, 65.9033689828705, 167.4132765991294, 269.39862171961073, 102.74751913604999, 100.63552684424776, 207.46541215255152, 207.54827612905981, 238.32028756539634, 302.8295382233369, 265.33659745819057, 231.30705320327488, 264.73301477106645, 144.88767415595345, 156.53659668669425, 116.47896926368668, 136.11421391664882, 237.29283715634634, 75.63148198352255, 178.1103518038585, 177.25882899889314, 196.10552929509186, 175.74908708874838, 141.67836689173959, 175.90539208884246, 316.0167489351404, 331.2480054611639, 198.55100276530098], "y": [177.77223253405108, 309.9392172793831, 257.50577472671654, 232.14518489205577, 114.75961895032482, 274.88160499690827, 214.41109129169686, 83.75445574121669, 204.9338689924496, 180.6474233016284, 308.6365468425158, 125.15139186822336, 183.20436661315887, 198.2823183187191, 250.88140321867982, 260.9285948529322, 231.57422513357758, 162.86180089387287, 112.38122113325453, 207.2901922557171, 165.97841642980922, 187.65649633382466, 177.525089455144, 164.58084674316552, 120.99096621873309, 318.3693030335659, 141.44246122473209, 276.64674262041274, 289.5020302495196, 191.161191052217, 315.1147456807793, 109.8150251684637, 176.9152672666701, 151.91174687061175, 335.8064062592956, 185.44771134428893, 195.23584997748492, 298.67049252237206, 300.201666067559, 159.16232251956316], "size": 0.017361111111111112, "pch": 19}, "gpar": {"col": ["#457b9d", "#457b9d", "#e63946", "#457b9d", "#457b9d", "#e63946", "#2a9d8f", "#457b9d", "#2a9d8f", "#e63946", "#457b9d", "#e63946", "#2a9d8f", "#e63946", "#e63946", "#2a9d8f", "#e63946", "#2a9d8f", "#457b9d", "#e63946", "#e63946", "#e63946", "#e63946", "#e63946", "#e63946", "#457b9d", "#e63946", "#e63946", "#e63946", "#2a9d8f", "#2a9d8f", "#457b9d", "#457b9d", "#e63946", "#2a9d8f", "#2a9d8f", "#457b9d", "#2a9d8f", "#2a9d8f", "#e63946"], "fill": ["#457b9d", "#457b9d", "#e63946", "#457b9d", "#457b9d", "#e63946", "#2a9d8f", "#457b9d", "#2a9d8f", "#e63946", "#457b9d", "#e63946", "#2a9d8f", "#e63946", "#e63946", "#2a9d8f", "#e63946", "#2a9d8f", "#457b9d", "#e63946", "#e63946", "#e63946", "#e63946", "#e63946", "#e63946", "#457b9d", "#e63946", "#e63946", "#e63946", "#2a9d8f", "#2a9d8f", "#457b9d", "#457b9d", "#e63946", "#2a9d8f", "#2a9d8f", "#457b9d", "#2a9d8f", "#2a9d8f", "#e63946"], "fontsize": 5.0, "alpha": 0.7}, "render_hint": "auto", "data": {"group": ["B", "B", "A", "B", "B", "A", "C", "B", "C", "A", "B", "A", "C", "A", "A", "C", "A", "C", "B", "A", "A", "A", "A", "A", "A", "B", "A", "A", "A", "C", "C", "B", "B", "A", "C", "C", "B", "C", "C", "A"], "x": ["0.64", "0.33", "0.29", "0.53", "0.66", "0.44", "0.86", "0.63", "0.48", "0.41", "0.38", "0.67", "0.45", "0.16", "0.42", "0.67", "0.26", "0.25", "0.52", "0.52", "0.60", "0.76", "0.66", "0.58", "0.66", "0.36", "0.39", "0.29", "0.34", "0.59", "0.19", "0.45", "0.44", "0.49", "0.44", "0.35", "0.44", "0.79", "0.83", "0.50"], "y": ["0.56", "0.23", "0.36", "0.42", "0.71", "0.31", "0.46", "0.79", "0.49", "0.55", "0.23", "0.69", "0.54", "0.50", "0.37", "0.35", "0.42", "0.59", "0.72", "0.48", "0.59", "0.53", "0.56", "0.59", "0.70", "0.20", "0.65", "0.31", "0.28", "0.52", "0.21", "0.73", "0.56", "0.62", "0.16", "0.54", "0.51", "0.25", "0.25", "0.60"]}}, {"id": "grob-7", "type": "text", "children": [], "props": {"x": 200.0, "y": 27.99999999999998, "label": "Scatter Plot", "rot": 0.0, "hjust": 0.5, "vjust": 0.5}, "gpar": {"col": "#24292f", "fontsize": 10.0}, "render_hint": "svg"}], "name": "scatter", "transform": {"x0": 0.0, "y0": 0.0, "w": 400.0, "h": 400.0}, "clip": false}, {"id": "vp-8", "type": "viewport", "children": [{"id": "grob-9", "type": "rect", "children": [], "props": {"x": 414.0, "y": 13.999999999999968, "w": 372.0, "h": 372.0}, "gpar": {"col": "#d0d7de", "fill": "white"}, "render_hint": "auto"}, {"id": "grob-10", "type": "rect", "children": [], "props": {"x": 436.0, "y": 184.00000000000003, "w": 48.0, "h": 168.0}, "gpar": {"col": "white", "fill": "#e63946", "lwd": 1.0}, "render_hint": "auto"}, {"id": "grob-11", "type": "text", "children": [], "props": {"x": 460.0, "y": 372.0, "label": "Mon", "rot": 0.0, "hjust": 0.5, "vjust": 0.5}, "gpar": {"col": "#57606a", "fontsize": 8.0}, "render_hint": "svg"}, {"id": "grob-12", "type": "text", "children": [], "props": {"x": 460.0, "y": 168.00000000000003, "label": "60%", "rot": 0.0, "hjust": 0.5, "vjust": 0.5}, "gpar": {"col": "#e63946", "fontsize": 7.0}, "render_hint": "svg"}, {"id": "grob-13", "type": "rect", "children": [], "props": {"x": 504.0, "y": 114.00000000000001, "w": 48.0, "h": 238.0}, "gpar": {"col": "white", "fill": "#457b9d", "lwd": 1.0}, "render_hint": "auto"}, {"id": "grob-14", "type": "text", "children": [], "props": {"x": 528.0, "y": 372.0, "label": "Tue", "rot": 0.0, "hjust": 0.5, "vjust": 0.5}, "gpar": {"col": "#57606a", "fontsize": 8.0}, "render_hint": "svg"}, {"id": "grob-15", "type": "text", "children": [], "props": {"x": 528.0, "y": 98.0, "label": "85%", "rot": 0.0, "hjust": 0.5, "vjust": 0.5}, "gpar": {"col": "#457b9d", "fontsize": 7.0}, "render_hint": "svg"}, {"id": "grob-16", "type": "rect", "children": [], "props": {"x": 572.0, "y": 226.00000000000003, "w": 48.0, "h": 126.0}, "gpar": {"col": "white", "fill": "#2a9d8f", "lwd": 1.0}, "render_hint": "auto"}, {"id": "grob-17", "type": "text", "children": [], "props": {"x": 596.0, "y": 372.0, "label": "Wed", "rot": 0.0, "hjust": 0.5, "vjust": 0.5}, "gpar": {"col": "#57606a", "fontsize": 8.0}, "render_hint": "svg"}, {"id": "grob-18", "type": "text", "children": [], "props": {"x": 596.0, "y": 210.00000000000006, "label": "45%", "rot": 0.0, "hjust": 0.5, "vjust": 0.5}, "gpar": {"col": "#2a9d8f", "fontsize": 7.0}, "render_hint": "svg"}, {"id": "grob-19", "type": "rect", "children": [], "props": {"x": 640.0, "y": 156.0, "w": 48.0, "h": 195.99999999999997}, "gpar": {"col": "white", "fill": "#e9c46a", "lwd": 1.0}, "render_hint": "auto"}, {"id": "grob-20", "type": "text", "children": [], "props": {"x": 664.0, "y": 372.0, "label": "Thu", "rot": 0.0, "hjust": 0.5, "vjust": 0.5}, "gpar": {"col": "#57606a", "fontsize": 8.0}, "render_hint": "svg"}, {"id": "grob-21", "type": "text", "children": [], "props": {"x": 664.0, "y": 140.0, "label": "70%", "rot": 0.0, "hjust": 0.5, "vjust": 0.5}, "gpar": {"col": "#e9c46a", "fontsize": 7.0}, "render_hint": "svg"}, {"id": "grob-22", "type": "rect", "children": [], "props": {"x": 708.0, "y": 198.0, "w": 48.0, "h": 154.0}, "gpar": {"col": "white", "fill": "#264653", "lwd": 1.0}, "render_hint": "auto"}, {"id": "grob-23", "type": "text", "children": [], "props": {"x": 732.0, "y": 372.0, "label": "Fri", "rot": 0.0, "hjust": 0.5, "vjust": 0.5}, "gpar": {"col": "#57606a", "fontsize": 8.0}, "render_hint": "svg"}, {"id": "grob-24", "type": "text", "children": [], "props": {"x": 732.0, "y": 181.99999999999997, "label": "55%", "rot": 0.0, "hjust": 0.5, "vjust": 0.5}, "gpar": {"col": "#264653", "fontsize": 7.0}, "render_hint": "svg"}, {"id": "grob-25", "type": "segments", "children": [], "props": {"x0": [428.0], "y0": [352.0], "x1": [780.0], "y1": [352.0]}, "gpar": {"col": "#d0d7de", "lwd": 1.0}, "render_hint": "auto"}, {"id": "grob-26", "type": "text", "children": [], "props": {"x": 600.0, "y": 27.99999999999998, "label": "Weekly Summary", "rot": 0.0, "hjust": 0.5, "vjust": 0.5}, "gpar": {"col": "#24292f", "fontsize": 10.0}, "render_hint": "svg"}], "name": "bars", "transform": {"x0": 400.0, "y0": 0.0, "w": 400.0, "h": 400.0}, "clip": false}], "name": "main", "transform": {"x0": 0.0, "y0": 0.0, "w": 800.0, "h": 400.0}, "clip": false}], "name": "ROOT", "transform": {"x0": 0.0, "y0": 0.0, "w": 800, "h": 400}, "clip": false}, "defs": {"gradients": [], "patterns": [], "clip_paths": [], "masks": []}},
+    {interactive: true, theme: "light"}
+);
+</script>
+</body>
+</html>
