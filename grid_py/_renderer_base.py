@@ -449,6 +449,14 @@ class GridRenderer(ABC):
     # Unit resolution: to INCHES (port of unit.c:transform)                 #
     # ===================================================================== #
 
+    def _get_scale(self) -> float:
+        """Return the current GSS_SCALE zoom factor (default 1.0)."""
+        try:
+            from ._state import get_state
+            return get_state()._scale
+        except Exception:
+            return 1.0
+
     def _resolve_to_inches(
         self,
         unit_obj: Any,
@@ -470,36 +478,16 @@ class GridRenderer(ABC):
         vtr = self._vp_transform_stack[-1]
         fontsize, cex, lineheight = self._gpar_font_params(gp)
 
-        if axis == "x":
-            if is_dim:
-                return transform_width_to_inches(
-                    unit_obj, 0, vtr.vpc,
-                    fontsize, cex, lineheight,
-                    vtr.width_cm, vtr.height_cm,
-                    self._str_metric_fn, None,
-                )
-            else:
-                return transform_x_to_inches(
-                    unit_obj, 0, vtr.vpc,
-                    fontsize, cex, lineheight,
-                    vtr.width_cm, vtr.height_cm,
-                    self._str_metric_fn, None,
-                )
-        else:
-            if is_dim:
-                return transform_height_to_inches(
-                    unit_obj, 0, vtr.vpc,
-                    fontsize, cex, lineheight,
-                    vtr.width_cm, vtr.height_cm,
-                    self._str_metric_fn, None,
-                )
-            else:
-                return transform_y_to_inches(
-                    unit_obj, 0, vtr.vpc,
-                    fontsize, cex, lineheight,
-                    vtr.width_cm, vtr.height_cm,
-                    self._str_metric_fn, None,
-                )
+        return _transform_to_inches(
+            unit_obj, 0, vtr.vpc,
+            fontsize, cex, lineheight,
+            this_cm=vtr.width_cm if axis == "x" else vtr.height_cm,
+            other_cm=vtr.height_cm if axis == "x" else vtr.width_cm,
+            axis=axis, is_dim=is_dim,
+            str_metric_fn=self._str_metric_fn,
+            grob_metric_fn=None,
+            scale=self._get_scale(),
+        )
 
     def _resolve_to_inches_idx(
         self,
@@ -525,6 +513,7 @@ class GridRenderer(ABC):
             axis=axis, is_dim=is_dim,
             str_metric_fn=self._str_metric_fn,
             grob_metric_fn=None,
+            scale=self._get_scale(),
         )
 
     # ===================================================================== #

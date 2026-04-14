@@ -757,6 +757,7 @@ def grid_newpage(
     height: float = 5.0,
     dpi: float = 150.0,
     bg: Any = "white",
+    zoom: float = 1.0,
 ) -> None:
     """Clear the surface and start a fresh page.
 
@@ -779,6 +780,11 @@ def grid_newpage(
         Resolution in dots per inch (default 150).
     bg : str or tuple, optional
         Background colour (default ``"white"``).
+    zoom : float, optional
+        GSS_SCALE zoom factor for physical units (default 1.0).
+        Matches R's ``grid.newpage(zoom=)`` (R >= 4.2).
+        Physical units (inches, cm, mm, points, etc.) are scaled by
+        this factor after conversion (R unit.c:804-814).
     """
     from .renderer import CairoRenderer
 
@@ -786,6 +792,8 @@ def grid_newpage(
 
     # Reset all state (viewport tree, gpar stack, display list)
     state.reset()
+    # Set GSS_SCALE zoom factor (R unit.c:804-814, grid state slot 15)
+    state._scale = float(zoom)
 
     # Obtain or create a renderer
     renderer = state.get_renderer()

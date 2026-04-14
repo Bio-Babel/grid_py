@@ -111,8 +111,15 @@ def _vp_children(vp: Any) -> list:
     Returns
     -------
     list
+        The children list (never ``None``).  If the attribute is absent
+        or ``None``, an empty list is returned.
     """
-    return _vp_attr(vp, "children", [])
+    result = _vp_attr(vp, "children", None)
+    if result is None:
+        # Initialise an empty list on the viewport so future appends persist.
+        result = []
+        _vp_set_attr(vp, "children", result)
+    return result
 
 
 def _vp_name(vp: Any) -> str:
@@ -211,6 +218,9 @@ class GridState:
         self._device_width_cm: float = _DEFAULT_DEVICE_WIDTH_CM
         self._device_height_cm: float = _DEFAULT_DEVICE_HEIGHT_CM
         self._renderer: Optional[Any] = None
+        # GSS_SCALE: zoom factor for physical units (R unit.c:804-814)
+        # R grid state slot 15.  Default 1.0, set by grid.newpage(zoom=).
+        self._scale: float = 1.0
 
     # ---- reset ------------------------------------------------------------
 

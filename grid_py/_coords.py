@@ -188,7 +188,8 @@ class GridCoords:
         trans = np.asarray(trans, dtype=float)
         if trans.shape != (3, 3):
             raise ValueError("from_device requires a 3x3 transformation matrix")
-        inv = np.linalg.solve(trans.T, np.eye(3))  # equivalent to solve(trans)
+        # R coords.R:183: cbind(x,y,1) %*% solve(trans)  →  pts @ inv(trans)
+        inv = np.linalg.solve(trans, np.eye(3))
         pts = np.column_stack([self._x, self._y, np.ones(len(self._x))])
         result = pts @ inv
         return GridCoords(result[:, 0], result[:, 1], name=self._name)

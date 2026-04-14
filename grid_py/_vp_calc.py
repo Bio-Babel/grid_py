@@ -362,11 +362,13 @@ def _transform_to_inches(
     is_dim: bool,
     str_metric_fn: Any = None,
     grob_metric_fn: Any = None,
+    scale: float = 1.0,
 ) -> float:
     """Core unit-to-inches conversion -- port of ``unit.c:transform()``.
 
     This implements the big switch statement (unit.c:658-800) that
-    converts each unit type to inches.
+    converts each unit type to inches, plus the GSS_SCALE post-scaling
+    for physical units (unit.c:804-814).
 
     Parameters
     ----------
@@ -388,6 +390,8 @@ def _transform_to_inches(
         String metric query function.
     grob_metric_fn : callable or None
         Grob metric query function.
+    scale : float
+        GSS_SCALE zoom factor (R unit.c:804-814).  Default 1.0.
 
     Returns
     -------
@@ -407,8 +411,9 @@ def _transform_to_inches(
     this_inches = this_cm / 2.54
 
     # ---- Absolute physical units (unit.c:670-682) ----
+    # R unit.c:804-814: physical units are additionally scaled by GSS_SCALE
     if utype in _INCHES_PER:
-        return value * _INCHES_PER[utype]
+        return value * _INCHES_PER[utype] * scale
 
     # ---- NPC (unit.c:667) ----
     # L_NPC: result * thisCM / 2.54

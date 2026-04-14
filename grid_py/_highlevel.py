@@ -68,7 +68,7 @@ from ._primitives import (
     segments_grob,
     text_grob,
 )
-from ._units import Unit, is_unit, unit_c
+from ._units import Unit, is_unit, unit_c, unit_pmax
 from ._viewport import (
     Viewport,
     VpStack,
@@ -455,10 +455,10 @@ def _mod_dims(
             return result
     else:
         # Existing row/col: take max or force
+        # R frames.R:254-255: if (!force) dim <- max(dim, dims[index])
         if not force:
-            # Use the larger of existing and new
-            # For simplicity, just keep existing (proper max requires context)
-            pass
+            existing = dims[index - 1 : index]  # 1-based → 0-based slice
+            dim = unit_pmax(dim, existing)
         # Replace the dimension at *index* (1-based)
         idx0 = index - 1
         parts_list: list[Unit] = []
@@ -640,10 +640,19 @@ def pack_grob(
                            _cell_viewport(col, row, border))
 
     # (iii) Default width/height from the grob
+    # R frames.R:399-414: if grob is present, use grobwidth/grobheight;
+    # if grob is NULL, use unit(1, "null")
     if width is None:
-        width = Unit(1, "null") if grob is None else Unit(1, "null")
+        if grob is None:
+            width = Unit(1, "null")
+        else:
+            # R: unit(1, "grobwidth", cgrob) or gPath variant when dynamic
+            width = Unit(1, "grobwidth", data=cgrob)
     if height is None:
-        height = Unit(1, "null") if grob is None else Unit(1, "null")
+        if grob is None:
+            height = Unit(1, "null")
+        else:
+            height = Unit(1, "grobheight", data=cgrob)
 
     # Include border in width/height
     if border is not None:
