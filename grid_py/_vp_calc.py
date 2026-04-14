@@ -443,13 +443,15 @@ def _transform_to_inches(
 
     # ---- Char (unit.c:683) ----
     # L_CHAR: result * gc->ps * gc->cex / 72
+    # Note: gc->ps = fontsize * GSS_SCALE (gpar.c:395), so char/lines
+    # units are implicitly scaled by GSS_SCALE through gc->ps.
     if utype == "char":
-        return value * gc_fontsize * gc_cex / 72.0
+        return value * gc_fontsize * scale * gc_cex / 72.0
 
     # ---- Lines (unit.c:687) ----
     # L_LINES: result * gc->ps * gc->cex * gc->lineheight / 72
     if utype == "lines":
-        return value * gc_fontsize * gc_cex * gc_lineheight / 72.0
+        return value * gc_fontsize * scale * gc_cex * gc_lineheight / 72.0
 
     # ---- Null (unit.c:693) ----
     # L_NULL: contributes 0 inches in this context
@@ -469,17 +471,19 @@ def _transform_to_inches(
                 return value * m.get("ascent", 0.0)
             else:
                 return value * m.get("descent", 0.0)
-        # Fallback: estimate from font size
+        # Fallback: estimate from font size (gc->ps * gc->cex, where
+        # gc->ps = fontsize * GSS_SCALE)
         text = str(data) if data is not None else ""
-        char_width = gc_fontsize * gc_cex * 0.6 / 72.0  # rough estimate
+        effective = gc_fontsize * scale * gc_cex
+        char_width = effective * 0.6 / 72.0
         if utype == "strwidth":
             return value * len(text) * char_width
         elif utype == "strheight":
-            return value * gc_fontsize * gc_cex / 72.0
+            return value * effective / 72.0
         elif utype == "strascent":
-            return value * gc_fontsize * gc_cex * 0.75 / 72.0
+            return value * effective * 0.75 / 72.0
         else:
-            return value * gc_fontsize * gc_cex * 0.25 / 72.0
+            return value * effective * 0.25 / 72.0
 
     # ---- Grob metrics (unit.c:770-800) ----
     if utype in ("grobwidth", "grobheight", "grobascent", "grobdescent",

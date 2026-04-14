@@ -660,12 +660,17 @@ class CairoRenderer(GridRenderer):
         return False
 
     def _set_font(self, gp: Optional[Gpar]) -> float:
-        """Configure font on context from Gpar.  Returns font size in device units."""
+        """Configure font on context from Gpar.  Returns font size in device units.
+
+        Mirrors R's gpar.c:391-398 where ``gc->ps = fontsize * GSS_SCALE``
+        and the device uses ``gc->ps * gc->cex`` for the effective size.
+        """
         ctx = self._ctx
         family = "sans-serif"
         slant = cairo.FONT_SLANT_NORMAL
         weight = cairo.FONT_WEIGHT_NORMAL
         fontsize = 12.0  # points
+        cex_val = 1.0
 
         if gp is not None:
             ff = gp.get("fontfamily", None)
@@ -678,7 +683,7 @@ class CairoRenderer(GridRenderer):
 
             cex = gp.get("cex", None)
             if cex is not None:
-                fontsize *= float(cex[0] if isinstance(cex, (list, tuple)) else cex)
+                cex_val = float(cex[0] if isinstance(cex, (list, tuple)) else cex)
 
             face = gp.get("fontface", None)
             if face is not None:
@@ -692,6 +697,10 @@ class CairoRenderer(GridRenderer):
                 elif val in (4, "bold.italic"):
                     weight = cairo.FONT_WEIGHT_BOLD
                     slant = cairo.FONT_SLANT_ITALIC
+
+        # R: gc->ps = fontsize * GSS_SCALE;  effective = gc->ps * gc->cex
+        scale = self._get_scale()
+        fontsize = fontsize * scale * cex_val
 
         ctx.select_font_face(family, slant, weight)
         # Font size in device units (points for vector, pixels for raster).

@@ -97,10 +97,12 @@ class CairoFontMetrics(FontMetricsBackend):
         fe = ctx.font_extents()
         te = ctx.text_extents(text)
 
+        # te = (x_bearing, y_bearing, width, height, x_advance, y_advance)
+        # R's GEStrWidth returns advance width (te[4]), not ink bbox (te[2]).
         return {
             "ascent": fe[0] / 72.0,
             "descent": fe[1] / 72.0,
-            "width": te[2] / 72.0,
+            "width": te[4] / 72.0,
         }
 
 
