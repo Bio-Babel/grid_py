@@ -91,8 +91,6 @@ VALID_UNIT_TYPES: Tuple[str, ...] = (
     "mychar",
     "mystrwidth",
     "mystrheight",
-    "mystrascent",
-    "mystrdescent",
     "sum",
     "min",
     "max",
@@ -467,8 +465,6 @@ class Unit:
             "strdescent",
             "mystrwidth",
             "mystrheight",
-            "mystrascent",
-            "mystrdescent",
         ) and d is not None:
             return f"{val}{utype}({d!r})"
 

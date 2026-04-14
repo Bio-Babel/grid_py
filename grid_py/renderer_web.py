@@ -709,7 +709,10 @@ class WebRenderer(GridRenderer):
         )
         self._node_stack = [self._scene_root]
         # Re-init base class viewport stack
-        self._vp_stack = [(0.0, 0.0, dw, dh, None)]
+        from ._vp_calc import calc_root_transform
+        root_vtr = calc_root_transform(self.width_in * 2.54, self.height_in * 2.54)
+        self._vp_transform_stack = [root_vtr]
+        self._vp_obj_stack = [None]
         self._layout_stack = []
         self._layout_depth_stack = []
         self._clip_stack = []

@@ -99,23 +99,21 @@ class TestViewportRotation:
 
     def test_no_rotation(self):
         r = CairoRenderer(width=3.0, height=2.0, dpi=100)
-        # 1 inch / 3 inch viewport = 1/3
-        assert r.resolve_w(Unit(1, "inches")) == pytest.approx(1.0 / 3.0)
+        # 1 inch at 100 dpi = 100 device units
+        assert r.resolve_w(Unit(1, "inches")) == pytest.approx(100.0)
 
     def test_90_degree_rotation(self):
         r = CairoRenderer(width=3.0, height=2.0, dpi=100)
         vp = Viewport(angle=90)
         r.push_viewport(vp)
-        # At 90° rotation, effective width and height swap:
-        # effective_w = pw*cos(90) + ph*sin(90) = 0 + 200 = 200px = 2in
-        # 1 inch / 2 in effective = 0.5
-        assert r.resolve_w(Unit(1, "inches")) == pytest.approx(0.5, abs=0.01)
+        # 1 inch = 100 device units (inches are absolute, not viewport-relative)
+        assert r.resolve_w(Unit(1, "inches")) == pytest.approx(100.0)
 
     def test_0_degree_unchanged(self):
         r = CairoRenderer(width=3.0, height=2.0, dpi=100)
         vp = Viewport(angle=0)
         r.push_viewport(vp)
-        assert r.resolve_w(Unit(1, "inches")) == pytest.approx(1.0 / 3.0)
+        assert r.resolve_w(Unit(1, "inches")) == pytest.approx(100.0)
 
 
 # ===================================================================== #

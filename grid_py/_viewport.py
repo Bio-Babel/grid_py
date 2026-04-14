@@ -264,7 +264,7 @@ class Viewport:
         just: Any = "centre",
         gp: Optional[Gpar] = None,
         clip: Any = "inherit",
-        mask: Any = False,
+        mask: Any = "inherit",
         xscale: Optional[Sequence[float]] = None,
         yscale: Optional[Sequence[float]] = None,
         angle: float = 0,
@@ -1386,7 +1386,7 @@ def data_viewport(
     yData: Optional[Sequence[float]] = None,
     xscale: Optional[Sequence[float]] = None,
     yscale: Optional[Sequence[float]] = None,
-    extension: float = 0.04,
+    extension: Union[float, Sequence[float]] = 0.05,
     **kwargs: Any,
 ) -> Viewport:
     """Create a viewport with scales derived from data ranges.
@@ -1424,9 +1424,15 @@ def data_viewport(
     -----
     Mirrors R's ``dataViewport()``.
     """
-    ext = [extension, extension]
-    if len(ext) < 2:
-        ext = ext * 2
+    # R: extension <- rep(extension, length.out = 2)
+    if isinstance(extension, (list, tuple)):
+        ext = [float(x) for x in extension]
+    else:
+        ext = [float(extension)]
+    # Recycle to length 2 (R's rep(..., length.out=2))
+    while len(ext) < 2:
+        ext.append(ext[0])
+    ext = ext[:2]
 
     if xscale is None:
         if xData is None:

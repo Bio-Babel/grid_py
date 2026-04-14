@@ -233,13 +233,24 @@ class CairoRenderer(GridRenderer):
         mask_renderer.width_in = float(dw) / self.dpi
         mask_renderer.height_in = float(dh) / self.dpi
         mask_renderer.dpi = self.dpi
-        mask_renderer._vp_stack = [(0.0, 0.0, float(dw), float(dh), None)]
+        # Initialize the new transform stack for the mask renderer
+        from ._vp_calc import calc_root_transform
+        mask_w_in = float(dw) / self.dpi
+        mask_h_in = float(dh) / self.dpi
+        root_vtr = calc_root_transform(mask_w_in * 2.54, mask_h_in * 2.54)
+        mask_renderer._vp_transform_stack = [root_vtr]
+        mask_renderer._vp_obj_stack = [None]
         mask_renderer._layout_stack = []
         mask_renderer._layout_depth_stack = []
         mask_renderer._clip_stack = []
         mask_renderer._path_collecting = False
         mask_renderer._pen_x = 0.0
         mask_renderer._pen_y = 0.0
+        mask_renderer._device_width = float(dw)
+        mask_renderer._device_height = float(dh)
+        mask_renderer._device_width_cm = mask_w_in * 2.54
+        mask_renderer._device_height_cm = mask_h_in * 2.54
+        mask_renderer._dev_units_per_inch = self.dpi
         # Cairo-specific state
         mask_renderer._surface = mask_surface
         mask_renderer._ctx = cairo.Context(mask_surface)
@@ -705,25 +716,21 @@ class CairoRenderer(GridRenderer):
         vjust: float = 0.5,
         gp: Optional[Gpar] = None,
     ) -> None:
+        """Draw a rectangle.  x, y, w, h are in device coordinates."""
         ctx = self._ctx
         ctx.save()
 
-        x0 = x - w * hjust
-        y0 = y - h * vjust
-        dx = self._x(x0)
-        # top-left corner in device coords (Y-flipped):
-        dy = self._y(y0 + h)
-        dw = self._sx(w)
-        dh = self._sy(h)
+        # x,y is the anchor point; apply justification to get top-left
+        dx = x - w * hjust
+        dy = y - h * (1.0 - vjust)  # device y increases downward
 
-        ctx.rectangle(dx, dy, dw, dh)
+        ctx.rectangle(dx, dy, w, h)
 
         if self._path_collecting:
             ctx.restore()
             return
 
-        # Compute bbox in NPC for group=False gradient resolution
-        bbox = (x0, y0, w, h)
+        bbox = (dx, dy, w, h)
         self._apply_fill(gp, bbox=bbox)
 
         stroke = self._apply_stroke(gp)
@@ -741,21 +748,16 @@ class CairoRenderer(GridRenderer):
         r: float,
         gp: Optional[Gpar] = None,
     ) -> None:
+        """Draw a circle.  x, y, r are in device coordinates."""
         ctx = self._ctx
         ctx.save()
 
-        cx = self._x(x)
-        cy = self._y(y)
-        # Radius: average of x/y scale
-        dr = (self._sx(r) + self._sy(r)) / 2.0
-
-        ctx.arc(cx, cy, dr, 0, 2 * math.pi)
+        ctx.arc(x, y, r, 0, 2 * math.pi)
 
         if self._path_collecting:
             ctx.restore()
             return
 
-        # Compute bbox in NPC for group=False gradient resolution
         bbox = (x - r, y - r, 2 * r, 2 * r)
         self._apply_fill(gp, bbox=bbox)
 
@@ -773,10 +775,10 @@ class CairoRenderer(GridRenderer):
         y: np.ndarray,
         gp: Optional[Gpar] = None,
     ) -> None:
+        """Draw connected lines.  x, y are in device coordinates."""
         n = max(len(x), len(y))
         if n < 2:
             return
-        # R-style recycling: repeat shorter array to match the longer one
         if len(x) < n:
             x = np.resize(x, n)
         if len(y) < n:
@@ -785,9 +787,9 @@ class CairoRenderer(GridRenderer):
         ctx = self._ctx
         ctx.save()
 
-        ctx.move_to(self._x(x[0]), self._y(y[0]))
+        ctx.move_to(x[0], y[0])
         for i in range(1, n):
-            ctx.line_to(self._x(x[i]), self._y(y[i]))
+            ctx.line_to(x[i], y[i])
 
         if self._path_collecting:
             ctx.restore()
@@ -821,9 +823,9 @@ class CairoRenderer(GridRenderer):
             py = y[mask]
             if len(px) < 2:
                 continue
-            ctx.move_to(self._x(px[0]), self._y(py[0]))
+            ctx.move_to(px[0], py[0])
             for i in range(1, len(px)):
-                ctx.line_to(self._x(px[i]), self._y(py[i]))
+                ctx.line_to(px[i], py[i])
 
         if self._path_collecting:
             ctx.restore()
@@ -849,8 +851,8 @@ class CairoRenderer(GridRenderer):
 
         n = min(len(x0), len(y0), len(x1), len(y1))
         for i in range(n):
-            ctx.move_to(self._x(x0[i]), self._y(y0[i]))
-            ctx.line_to(self._x(x1[i]), self._y(y1[i]))
+            ctx.move_to(x0[i], y0[i])
+            ctx.line_to(x1[i], y1[i])
 
         if self._path_collecting:
             ctx.restore()
@@ -874,16 +876,15 @@ class CairoRenderer(GridRenderer):
         ctx = self._ctx
         ctx.save()
 
-        ctx.move_to(self._x(x[0]), self._y(y[0]))
+        ctx.move_to(x[0], y[0])
         for i in range(1, len(x)):
-            ctx.line_to(self._x(x[i]), self._y(y[i]))
+            ctx.line_to(x[i], y[i])
         ctx.close_path()
 
         if self._path_collecting:
             ctx.restore()
             return
 
-        # Compute bbox from polygon vertices
         bbox = (float(np.min(x)), float(np.min(y)),
                 float(np.ptp(x)), float(np.ptp(y)))
         self._apply_fill(gp, bbox=bbox)
@@ -919,9 +920,9 @@ class CairoRenderer(GridRenderer):
             py = y[mask]
             if len(px) < 2:
                 continue
-            ctx.move_to(self._x(px[0]), self._y(py[0]))
+            ctx.move_to(px[0], py[0])
             for i in range(1, len(px)):
-                ctx.line_to(self._x(px[i]), self._y(py[i]))
+                ctx.line_to(px[i], py[i])
             ctx.close_path()
 
         if self._path_collecting:
@@ -959,20 +960,16 @@ class CairoRenderer(GridRenderer):
         tw = ext.width
         th = ext.height
 
-        # Anchor position in device coords
-        dx = self._x(x)
-        dy = self._y(y)
-
-        # Justification offsets
+        # x, y are already in device coords
         off_x = -tw * hjust
         off_y = th * vjust
 
         if rot != 0.0:
-            ctx.translate(dx, dy)
+            ctx.translate(x, y)
             ctx.rotate(-math.radians(rot))  # negative: grid uses CCW
             ctx.move_to(off_x, off_y)
         else:
-            ctx.move_to(dx + off_x, dy + off_y)
+            ctx.move_to(x + off_x, y + off_y)
 
         if self._path_collecting:
             # Build text outline path without rendering pixels
@@ -1272,8 +1269,8 @@ class CairoRenderer(GridRenderer):
             lwd_arr = np.full(n, 1.0)
 
         for i in range(n):
-            cx = self._x(x[i])
-            cy = self._y(y[i])
+            cx = x[i]
+            cy = y[i]
             r = size_arr[i] * scale if i < len(size_arr) else size * scale
             lwd_i = float(lwd_arr[i % len(lwd_arr)])
             self._draw_pch_shape(
@@ -1343,13 +1340,9 @@ class CairoRenderer(GridRenderer):
             bytearray(bgra.tobytes()), cairo.FORMAT_ARGB32, img_w, img_h, stride
         )
 
-        dx = self._x(x)
-        dy = self._y(y + h)
-        dw = self._sx(w)
-        dh = self._sy(h)
-
-        ctx.translate(dx, dy)
-        ctx.scale(dw / img_w, dh / img_h)
+        # x, y, w, h are in device coords; y is top-left origin
+        ctx.translate(x, y)
+        ctx.scale(w / img_w, h / img_h)
         ctx.set_source_surface(img_surface, 0, 0)
         pattern = ctx.get_source()
         if interpolate:
@@ -1371,25 +1364,21 @@ class CairoRenderer(GridRenderer):
         vjust: float = 0.5,
         gp: Optional[Gpar] = None,
     ) -> None:
-        """Draw a rounded rectangle."""
+        """Draw a rounded rectangle.  All coords in device units."""
         ctx = self._ctx
         ctx.save()
 
-        x0 = x - w * hjust
-        y0 = y - h * vjust
-        dx = self._x(x0)
-        dy = self._y(y0 + h)
-        dw = self._sx(w)
-        dh = self._sy(h)
-        dr = min(self._sx(r), dw / 2, dh / 2)
+        dx = x - w * hjust
+        dy = y - h * (1.0 - vjust)
+        dr = min(r, w / 2, h / 2)
 
         if dr <= 0:
-            ctx.rectangle(dx, dy, dw, dh)
+            ctx.rectangle(dx, dy, w, h)
         else:
             ctx.new_path()
-            ctx.arc(dx + dw - dr, dy + dr, dr, -math.pi / 2, 0)
-            ctx.arc(dx + dw - dr, dy + dh - dr, dr, 0, math.pi / 2)
-            ctx.arc(dx + dr, dy + dh - dr, dr, math.pi / 2, math.pi)
+            ctx.arc(dx + w - dr, dy + dr, dr, -math.pi / 2, 0)
+            ctx.arc(dx + w - dr, dy + h - dr, dr, 0, math.pi / 2)
+            ctx.arc(dx + dr, dy + h - dr, dr, math.pi / 2, math.pi)
             ctx.arc(dx + dr, dy + dr, dr, math.pi, 3 * math.pi / 2)
             ctx.close_path()
 
@@ -1397,7 +1386,7 @@ class CairoRenderer(GridRenderer):
             ctx.restore()
             return
 
-        bbox = (x0, y0, w, h)
+        bbox = (dx, dy, w, h)
         self._apply_fill(gp, bbox=bbox)
 
         stroke = self._apply_stroke(gp)
@@ -1415,13 +1404,14 @@ class CairoRenderer(GridRenderer):
         self._pen_y = y
 
     def line_to(self, x: float, y: float, gp: Optional[Gpar] = None) -> None:
+        """Draw line from pen to (x,y).  Coords in device units."""
         ctx = self._ctx
         ctx.save()
         stroke = self._apply_stroke(gp)
         x0 = getattr(self, "_pen_x", 0.0)
         y0 = getattr(self, "_pen_y", 0.0)
-        ctx.move_to(self._x(x0), self._y(y0))
-        ctx.line_to(self._x(x), self._y(y))
+        ctx.move_to(x0, y0)
+        ctx.line_to(x, y)
         if stroke[3] > 0:
             ctx.stroke()
         else:
@@ -1433,12 +1423,13 @@ class CairoRenderer(GridRenderer):
     # ---- clipping ----------------------------------------------------------
 
     def push_clip(self, x0: float, y0: float, x1: float, y1: float) -> None:
+        """Push clip rectangle.  Coords in device units."""
         self._ctx.save()
-        dx0 = self._x(min(x0, x1))
-        dy0 = self._y(max(y0, y1))
-        dw = self._sx(abs(x1 - x0))
-        dh = self._sy(abs(y1 - y0))
-        self._ctx.rectangle(dx0, dy0, dw, dh)
+        cx = min(x0, x1)
+        cy = min(y0, y1)
+        cw = abs(x1 - x0)
+        ch = abs(y1 - y0)
+        self._ctx.rectangle(cx, cy, cw, ch)
         self._ctx.clip()
 
     def pop_clip(self) -> None:

@@ -150,19 +150,15 @@ class TestSegments:
 
 
 class TestArrows:
-    def test_arrows_grob(self):
-        import warnings
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            g = arrows_grob()
-        assert g is not None
+    def test_arrows_grob_defunct(self):
+        """R primitives.R:539: arrowsGrob calls .Defunct() — must raise."""
+        with pytest.raises(NotImplementedError, match="defunct"):
+            arrows_grob()
 
-    def test_grid_arrows_no_draw(self):
-        import warnings
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            g = grid_arrows(draw=False)
-        assert g is not None
+    def test_grid_arrows_defunct(self):
+        """R primitives.R:543: grid.arrows calls .Defunct() — must raise."""
+        with pytest.raises(NotImplementedError, match="defunct"):
+            grid_arrows()
 
 
 # ---------------------------------------------------------------------------

@@ -1,13 +1,18 @@
 """Abstract base class for all grid_py rendering backends.
 
-Provides the shared coordinate system (viewport stack, unit resolution,
-layout computation, NPC-to-device coordinate helpers) that every backend
-needs.  Subclasses implement the actual drawing primitives and output
-methods.
+Provides the shared coordinate system (viewport transform stack, unit
+resolution to **inches**, layout computation, and inches-to-device
+coordinate helpers) that every backend needs.  Subclasses implement the
+actual drawing primitives and output methods.
 
-The coordinate convention matches R's grid: the unit square [0, 1] x [0, 1]
+The coordinate convention matches R's grid: the unit square [0, 1] × [0, 1]
 with the origin at the **bottom-left**.  Device coordinates use a top-left
-origin (Y-flip is applied internally by :meth:`_y`).
+origin (Y-flip is applied internally by :meth:`_to_dev_x` / :meth:`_to_dev_y`).
+
+Coordinate pipeline (matches R's grid/src/unit.c + viewport.c):
+    Unit → _resolve_to_inches() → inches within viewport
+         → trans(location, viewport_transform) → absolute inches on device
+         → _to_dev_x/_to_dev_y → device coordinates (pixels or points)
 """
 
 from __future__ import annotations
@@ -17,6 +22,22 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
+
+from ._vp_calc import (
+    ViewportContext,
+    ViewportTransformResult,
+    calc_root_transform,
+    calc_viewport_transform,
+    identity,
+    location,
+    trans,
+    transform_x_to_inches,
+    transform_y_to_inches,
+    transform_width_to_inches,
+    transform_height_to_inches,
+    _transform_to_inches,
+    _INCHES_PER,
+)
 
 __all__ = ["GridRenderer"]
 
@@ -54,85 +75,171 @@ class GridRenderer(ABC):
 
         dw = float(device_width) if device_width is not None else width * dpi
         dh = float(device_height) if device_height is not None else height * dpi
+        self._device_width: float = dw
+        self._device_height: float = dh
 
-        # Viewport transform stack.  Each entry is
-        # ``(x0, y0, w, h, vp_obj)`` in device-unit space.
-        # NPC [0, 1] maps to [x0, x0+w] x [y0, y0+h].
-        # ``vp_obj`` is the Viewport object (``None`` for the root entry).
-        self._vp_stack: List[Tuple[float, float, float, float, Any]] = [
-            (0.0, 0.0, dw, dh, None)
-        ]
+        # Device dimensions in CM (used by calcViewportTransform)
+        self._device_width_cm: float = width * 2.54
+        self._device_height_cm: float = height * 2.54
+
+        # Scale factor: device units per inch
+        # For raster surfaces: dpi.  For vector surfaces (PDF/SVG): 72.
+        self._dev_units_per_inch: float = dw / width if width > 0 else dpi
+
+        # Viewport transform stack.  Each entry is a ViewportTransformResult
+        # containing width_cm, height_cm, rotation_angle, 3×3 transform matrix,
+        # and ViewportContext (xscale/yscale).
+        # The root entry represents the device itself.
+        root_vtr = calc_root_transform(self._device_width_cm, self._device_height_cm)
+        self._vp_transform_stack: List[ViewportTransformResult] = [root_vtr]
+
+        # Keep a parallel list of viewport objects for attribute access
+        self._vp_obj_stack: List[Any] = [None]
+
         self._layout_stack: List[dict] = []
         self._layout_depth_stack: List[int] = []
         self._clip_stack: List[bool] = []
         self._path_collecting: bool = False
 
-        # Pen position for move.to / line.to
+        # Pen position for move.to / line.to (in device coords now)
         self._pen_x: float = 0.0
         self._pen_y: float = 0.0
 
         # Grob metadata (tooltip data attachment for web renderers)
         self._current_grob_metadata: Optional[dict] = None
 
+        # ---- Backward compatibility: old _vp_stack API ----
+        # Some external code may still access _vp_stack.  We provide a
+        # property that synthesises the old (x0, y0, pw, ph, vp_obj) tuples
+        # from the new transform stack.
+
+    @property
+    def _vp_stack(self) -> List[Tuple[float, float, float, float, Any]]:
+        """Backward-compatible viewport stack (device-unit tuples).
+
+        Synthesised from the new transform stack.  Each entry is
+        ``(x0, y0, pw, ph, vp_obj)`` where (x0, y0) is the bottom-left
+        corner in device units and (pw, ph) are dimensions in device units.
+        """
+        result = []
+        for i, vtr in enumerate(self._vp_transform_stack):
+            vp_obj = self._vp_obj_stack[i] if i < len(self._vp_obj_stack) else None
+            # Bottom-left corner in inches (origin of viewport)
+            bl = trans(location(0.0, 0.0), vtr.transform)
+            w_in = vtr.width_cm / 2.54
+            h_in = vtr.height_cm / 2.54
+            x0 = bl[0] * self._dev_units_per_inch
+            y0_bottom = bl[1] * self._dev_units_per_inch
+            pw = w_in * self._dev_units_per_inch
+            ph = h_in * self._dev_units_per_inch
+            # Convert to top-left origin for device coords
+            y0_device = self._device_height - y0_bottom - ph
+            result.append((x0, y0_device, pw, ph, vp_obj))
+        return result
+
     # ===================================================================== #
     # Grob metadata (data attachment for interactive features)              #
     # ===================================================================== #
 
     def set_grob_metadata(self, metadata: Optional[dict]) -> None:
-        """Set metadata for the next draw_* call (tooltip data, etc.).
-
-        Called by ``_render_grob`` before each drawing primitive.
-        Subclasses (e.g. WebRenderer) use this to attach data to scene
-        graph nodes.  CairoRenderer ignores it.
-        """
         self._current_grob_metadata = metadata
 
     def clear_grob_metadata(self) -> None:
-        """Clear grob metadata after the draw_* call completes."""
         self._current_grob_metadata = None
 
     # ===================================================================== #
-    # Public viewport-bounds API (replaces direct _vp_stack access)         #
+    # Public viewport-bounds API                                            #
     # ===================================================================== #
 
     def get_viewport_bounds(self) -> Tuple[float, float, float, float]:
-        """Return ``(x0, y0, pw, ph)`` of the current viewport in device units."""
-        e = self._vp_stack[-1]
+        """Return ``(x0, y0, pw, ph)`` of the current viewport in device units.
+
+        Uses the backward-compatible synthesised bounds.
+        """
+        stack = self._vp_stack
+        e = stack[-1]
         return (e[0], e[1], e[2], e[3])
 
     def get_viewport_object(self) -> Any:
         """Return the Viewport object of the current viewport, or ``None``."""
-        return self._vp_stack[-1][4] if len(self._vp_stack[-1]) > 4 else None
+        return self._vp_obj_stack[-1] if self._vp_obj_stack else None
+
+    def get_current_vtr(self) -> ViewportTransformResult:
+        """Return the current viewport's transform result."""
+        return self._vp_transform_stack[-1]
+
+    # ===================================================================== #
+    # Gpar extraction helpers                                               #
+    # ===================================================================== #
+
+    def _gpar_font_params(self, gp: Optional[Any] = None) -> Tuple[float, float, float]:
+        """Extract (fontsize, cex, lineheight) from gpar for unit resolution."""
+        fontsize = 12.0
+        cex = 1.0
+        lineheight = 1.2
+        if gp is not None:
+            fs = gp.get("fontsize", None)
+            if fs is not None:
+                fontsize = float(fs[0] if isinstance(fs, (list, tuple)) else fs)
+            cx = gp.get("cex", None)
+            if cx is not None:
+                cex = float(cx[0] if isinstance(cx, (list, tuple)) else cx)
+            lh = gp.get("lineheight", None)
+            if lh is not None:
+                lineheight = float(lh[0] if isinstance(lh, (list, tuple)) else lh)
+        return fontsize, cex, lineheight
 
     # ===================================================================== #
     # Viewport management (shared across all backends)                      #
     # ===================================================================== #
 
     def push_viewport(self, vp: Any) -> None:
-        """Push a viewport, updating the coordinate transform.
+        """Push a viewport, computing its 3×3 transform via calcViewportTransform.
 
         Handles three viewport types:
-        1. Layout viewport (has ``_layout`` with grid info) -- stores grid
+        1. Layout viewport (has ``_layout``) -- stores grid, same transform
         2. Child viewport with ``layout_pos_row/col`` -- uses parent grid
-        3. Simple viewport with x/y/width/height -- direct position
+        3. Simple viewport with x/y/width/height -- full transform calc
         """
         from ._units import Unit
 
-        x0, y0, pw, ph, *_vp_rest = self._vp_stack[-1]
+        parent_vtr = self._vp_transform_stack[-1]
 
         layout = getattr(vp, "_layout", None)
         layout_pos_row = getattr(vp, "_layout_pos_row", None)
         layout_pos_col = getattr(vp, "_layout_pos_col", None)
 
+        # --- Case 1: Layout viewport ---
         if layout is not None:
+            # Layout viewport uses same bounds as parent but stores grid info.
+            # Compute grid in device units for layout children.
+            w_dev = parent_vtr.width_cm / 2.54 * self._dev_units_per_inch
+            h_dev = parent_vtr.height_cm / 2.54 * self._dev_units_per_inch
             respect = getattr(layout, "respect", False)
-            grid_info = self._compute_grid(layout, pw, ph, respect=bool(respect))
-            self._vp_stack.append((x0, y0, pw, ph, vp))
+            grid_info = self._compute_grid(layout, w_dev, h_dev, respect=bool(respect))
+
+            # The layout viewport itself has the same transform as parent
+            # but we create a new VTR with the vp's xscale/yscale
+            xscale = getattr(vp, "_xscale", [0.0, 1.0])
+            yscale = getattr(vp, "_yscale", [0.0, 1.0])
+            vtr = ViewportTransformResult(
+                width_cm=parent_vtr.width_cm,
+                height_cm=parent_vtr.height_cm,
+                rotation_angle=parent_vtr.rotation_angle,
+                transform=parent_vtr.transform.copy(),
+                vpc=ViewportContext(
+                    xscale=(float(xscale[0]), float(xscale[1])),
+                    yscale=(float(yscale[0]), float(yscale[1])),
+                ),
+            )
+            self._vp_transform_stack.append(vtr)
+            self._vp_obj_stack.append(vp)
             self._layout_stack.append(grid_info)
             self._clip_stack.append(False)
-            self._layout_depth_stack.append(len(self._vp_stack))
+            self._layout_depth_stack.append(len(self._vp_transform_stack))
             return
 
+        # --- Case 2: Layout-positioned child ---
         if layout_pos_row is not None and layout_pos_col is not None:
             if self._layout_stack:
                 grid = self._layout_stack[-1]
@@ -150,58 +257,103 @@ class GridRenderer(ABC):
                 else:
                     l = r = int(layout_pos_col) - 1
 
-                cell_x0 = x0 + (col_starts[l] if l < len(col_starts) else 0)
-                cell_y0 = y0 + (row_starts[t] if t < len(row_starts) else 0)
-                cell_w = sum(col_widths[l:r + 1]) if r < len(col_widths) else pw
-                cell_h = sum(row_heights[t:b + 1]) if b < len(row_heights) else ph
+                cell_x0_dev = col_starts[l] if l < len(col_starts) else 0
+                cell_y0_dev = row_starts[t] if t < len(row_starts) else 0
+                cell_w_dev = sum(col_widths[l:r + 1]) if r < len(col_widths) else 0
+                cell_h_dev = sum(row_heights[t:b + 1]) if b < len(row_heights) else 0
 
-                self._vp_stack.append((cell_x0, cell_y0, cell_w, cell_h, vp))
-                self._do_apply_clip(vp, cell_x0, cell_y0, cell_w, cell_h)
+                # Convert device units to inches for the transform
+                cell_w_in = cell_w_dev / self._dev_units_per_inch
+                cell_h_in = cell_h_dev / self._dev_units_per_inch
+
+                # The cell's bottom-left in the parent's coordinate system
+                # Layout grid uses device coords with top-left origin;
+                # we need to convert to the parent's inches system.
+                parent_h_in = parent_vtr.height_cm / 2.54
+
+                # Cell position in parent's NPC then inches
+                parent_w_dev = parent_vtr.width_cm / 2.54 * self._dev_units_per_inch
+                parent_h_dev = parent_vtr.height_cm / 2.54 * self._dev_units_per_inch
+                cell_x_in = cell_x0_dev / self._dev_units_per_inch
+                # Device y is top-down; convert to bottom-up inches
+                cell_y_in = parent_h_in - (cell_y0_dev + cell_h_dev) / self._dev_units_per_inch
+
+                # Build a simple translation transform for the cell
+                from ._vp_calc import translation, multiply
+                cell_translation = translation(cell_x_in, cell_y_in)
+                cell_transform = multiply(cell_translation, parent_vtr.transform)
+
+                xscale = getattr(vp, "_xscale", [0.0, 1.0])
+                yscale = getattr(vp, "_yscale", [0.0, 1.0])
+                vtr = ViewportTransformResult(
+                    width_cm=cell_w_in * 2.54,
+                    height_cm=cell_h_in * 2.54,
+                    rotation_angle=parent_vtr.rotation_angle,
+                    transform=cell_transform,
+                    vpc=ViewportContext(
+                        xscale=(float(xscale[0]), float(xscale[1])),
+                        yscale=(float(yscale[0]), float(yscale[1])),
+                    ),
+                )
+                self._vp_transform_stack.append(vtr)
+                self._vp_obj_stack.append(vp)
+                self._do_apply_clip_vtr(vp, vtr)
                 return
 
-        # Simple viewport with explicit x/y/width/height
-        vp_x_raw = getattr(vp, "_x", None)
-        vp_y_raw = getattr(vp, "_y", None)
-        vp_w_raw = getattr(vp, "_width", None)
-        vp_h_raw = getattr(vp, "_height", None)
+        # --- Case 3: Simple viewport with x/y/width/height ---
+        # Use calc_viewport_transform (port of R's calcViewportTransform)
+        fontsize, cex, lineheight = self._gpar_font_params(None)
 
-        vp_x = self.resolve_x(vp_x_raw) if vp_x_raw is not None else 0.5
-        vp_y = self.resolve_y(vp_y_raw) if vp_y_raw is not None else 0.5
-        vp_w = self.resolve_w(vp_w_raw) if vp_w_raw is not None else 1.0
-        vp_h = self.resolve_h(vp_h_raw) if vp_h_raw is not None else 1.0
+        vtr = calc_viewport_transform(
+            vp,
+            parent_vtr.transform,
+            parent_vtr.width_cm,
+            parent_vtr.height_cm,
+            parent_vtr.rotation_angle,
+            parent_vtr.vpc,
+            gc_fontsize=fontsize,
+            gc_cex=cex,
+            gc_lineheight=lineheight,
+            str_metric_fn=self._str_metric_fn,
+            grob_metric_fn=None,
+        )
+        self._vp_transform_stack.append(vtr)
+        self._vp_obj_stack.append(vp)
+        self._do_apply_clip_vtr(vp, vtr)
 
-        just = getattr(vp, "_just", (0.5, 0.5))
-        if isinstance(just, (list, tuple)) and len(just) >= 2:
-            hjust, vjust = float(just[0]), float(just[1])
-        else:
-            hjust, vjust = 0.5, 0.5
+    def _str_metric_fn(self, text: str, gp: Any) -> Dict[str, float]:
+        """String metric callback for unit resolution."""
+        return self.text_extents(text, gp=gp)
 
-        new_w = vp_w * pw
-        new_h = vp_h * ph
-        new_x0 = x0 + vp_x * pw - hjust * new_w
-        new_y0 = y0 + vp_y * ph - vjust * new_h
-
-        self._vp_stack.append((new_x0, new_y0, new_w, new_h, vp))
-        self._do_apply_clip(vp, new_x0, new_y0, new_w, new_h)
-
-    def _do_apply_clip(self, vp: Any, x0: float, y0: float, w: float, h: float) -> None:
-        """Check whether clipping is requested and delegate to the backend."""
+    def _do_apply_clip_vtr(self, vp: Any, vtr: ViewportTransformResult) -> None:
+        """Apply clipping for a viewport using its transform."""
         clip = getattr(vp, "_clip", None)
         if clip is True or clip == "on":
-            self._apply_clip_rect(x0, y0, w, h)
+            # Compute clip rect in device coords from the viewport bounds
+            bl = trans(location(0.0, 0.0), vtr.transform)
+            w_in = vtr.width_cm / 2.54
+            h_in = vtr.height_cm / 2.54
+            x0 = bl[0] * self._dev_units_per_inch
+            y0_bottom = bl[1] * self._dev_units_per_inch
+            pw = w_in * self._dev_units_per_inch
+            ph = h_in * self._dev_units_per_inch
+            # Convert to device top-left origin
+            y0_device = self._device_height - y0_bottom - ph
+            self._apply_clip_rect(x0, y0_device, pw, ph)
             self._clip_stack.append(True)
         else:
             self._clip_stack.append(False)
 
     def pop_viewport(self) -> None:
         """Pop the current viewport and restore clipping/layout state."""
-        if len(self._vp_stack) > 1:
+        if len(self._vp_transform_stack) > 1:
             depth_stack = self._layout_depth_stack
-            if depth_stack and depth_stack[-1] == len(self._vp_stack):
+            if depth_stack and depth_stack[-1] == len(self._vp_transform_stack):
                 depth_stack.pop()
                 if self._layout_stack:
                     self._layout_stack.pop()
-            self._vp_stack.pop()
+            self._vp_transform_stack.pop()
+            self._vp_obj_stack.pop()
             if self._clip_stack:
                 had_clip = self._clip_stack.pop()
                 if had_clip:
@@ -209,7 +361,7 @@ class GridRenderer(ABC):
 
     def pop_viewport_to_root(self) -> None:
         """Pop all viewports back to the root (device-level) entry."""
-        while len(self._vp_stack) > 1:
+        while len(self._vp_transform_stack) > 1:
             self.pop_viewport()
 
     # ===================================================================== #
@@ -220,11 +372,7 @@ class GridRenderer(ABC):
         self, layout: Any, parent_w: float, parent_h: float,
         respect: bool = False,
     ) -> dict:
-        """Compute row/column positions for a GridLayout within the parent.
-
-        Delegates to :func:`._layout._calc_layout_sizes` which implements
-        the full three-phase layout algorithm from R ``layout.c``.
-        """
+        """Compute row/column positions for a GridLayout within the parent."""
         from ._layout import _calc_layout_sizes, GridLayout
 
         if isinstance(layout, GridLayout):
@@ -251,36 +399,12 @@ class GridRenderer(ABC):
             "row_starts": row_starts, "row_heights": row_heights,
         }
 
-    def _resolve_sizes_with_scale(
-        self, unit_obj: Any, n: int, total: float, null_scale: float,
-    ) -> list:
-        """Resolve sizes using a fixed scale for null units (respect mode)."""
-        if unit_obj is None:
-            return [null_scale] * n
-        from ._units import Unit, _INCHES_PER
-        if not isinstance(unit_obj, Unit):
-            return [null_scale] * n
-        sizes = []
-        for v, t in zip(unit_obj._values, unit_obj._units):
-            if t == "npc":
-                sizes.append(float(v) * total)
-            elif t in _INCHES_PER:
-                sizes.append(float(v) * _INCHES_PER[t] * self.dpi)
-            else:
-                sizes.append(float(v) * null_scale)
-        return sizes
-
     def _resolve_sizes(self, unit_obj: Any, n: int, total: float) -> list:
-        """Resolve a Unit vector to device sizes, distributing null units.
-
-        Mirrors R's grid unit resolution: absolute units are converted to
-        device pixels first; the remaining space is distributed among
-        ``"null"`` units proportionally.
-        """
+        """Resolve a Unit vector to device sizes, distributing null units."""
         if unit_obj is None:
             return [total / n] * n
 
-        from ._units import Unit, _INCHES_PER
+        from ._units import Unit
         if not isinstance(unit_obj, Unit):
             return [total / n] * n
 
@@ -301,7 +425,7 @@ class GridRenderer(ABC):
                 abs_sizes[i] = px
                 abs_total += px
             elif t in _INCHES_PER:
-                px = float(v) * _INCHES_PER[t] * self.dpi
+                px = float(v) * _INCHES_PER[t] * self._dev_units_per_inch
                 abs_sizes[i] = px
                 abs_total += px
             elif t == "null":
@@ -322,285 +446,302 @@ class GridRenderer(ABC):
         return sizes
 
     # ===================================================================== #
-    # Unit resolution (shared -- NO Cairo dependency)                       #
+    # Unit resolution: to INCHES (port of unit.c:transform)                 #
     # ===================================================================== #
 
-    def _resolve_to_npc(
+    def _resolve_to_inches(
         self,
         unit_obj: Any,
         axis: str,
         is_dim: bool,
         gp: Optional[Any] = None,
     ) -> float:
-        """Resolve a single :class:`Unit` value to an NPC float.
+        """Resolve a single :class:`Unit` value to inches.
 
-        Mirrors R's two-phase unit resolution (``unit.c:transformX/Y``):
-        first converts the unit to inches using the current viewport's
-        physical dimensions, then normalises to NPC by dividing by the
-        viewport size in inches.
+        Port of R's unit.c transformXtoINCHES / transformYtoINCHES.
+        Uses the current viewport's transform context (widthCM, heightCM,
+        ViewportContext) for the conversion.
         """
-        from ._units import Unit, _INCHES_PER
+        from ._units import Unit
 
         if not isinstance(unit_obj, Unit):
             return float(unit_obj)
 
-        value = float(unit_obj._values[0])
-        utype = unit_obj._units[0]
+        vtr = self._vp_transform_stack[-1]
+        fontsize, cex, lineheight = self._gpar_font_params(gp)
 
-        # Viewport physical size (accounting for rotation).
-        x0, y0, pw, ph, vp_obj = self._vp_stack[-1]
-        angle = float(getattr(vp_obj, "_angle", 0)) if vp_obj is not None else 0.0
-        sin_a = abs(math.sin(math.radians(angle)))
-        cos_a = abs(math.cos(math.radians(angle)))
-        eff_w = pw * cos_a + ph * sin_a
-        eff_h = ph * cos_a + pw * sin_a
-        vp_px = eff_w if axis == "x" else eff_h
-        vp_inches = vp_px / self.dpi
-        if vp_inches == 0:
-            return 0.0
-
-        if utype == "npc":
-            return value
-
-        if utype in _INCHES_PER:
-            inches = value * _INCHES_PER[utype]
-            return inches / vp_inches
-
-        if utype == "native":
-            if vp_obj is not None:
-                scale = (
-                    getattr(vp_obj, "_xscale", [0, 1])
-                    if axis == "x"
-                    else getattr(vp_obj, "_yscale", [0, 1])
+        if axis == "x":
+            if is_dim:
+                return transform_width_to_inches(
+                    unit_obj, 0, vtr.vpc,
+                    fontsize, cex, lineheight,
+                    vtr.width_cm, vtr.height_cm,
+                    self._str_metric_fn, None,
                 )
             else:
-                scale = [0, 1]
-            smin, smax = float(scale[0]), float(scale[1])
-            srange = smax - smin
-            if srange == 0:
-                return 0.0
+                return transform_x_to_inches(
+                    unit_obj, 0, vtr.vpc,
+                    fontsize, cex, lineheight,
+                    vtr.width_cm, vtr.height_cm,
+                    self._str_metric_fn, None,
+                )
+        else:
             if is_dim:
-                return value / srange
-            return (value - smin) / srange
-
-        if utype in ("char", "lines"):
-            fontsize = 12.0
-            cex = 1.0
-            lineheight = 1.2
-            if gp is not None:
-                fs = gp.get("fontsize", None)
-                if fs is not None:
-                    fontsize = float(fs[0] if isinstance(fs, (list, tuple)) else fs)
-                cx = gp.get("cex", None)
-                if cx is not None:
-                    cex = float(cx[0] if isinstance(cx, (list, tuple)) else cx)
-                if utype == "lines":
-                    lh = gp.get("lineheight", None)
-                    if lh is not None:
-                        lineheight = float(lh[0] if isinstance(lh, (list, tuple)) else lh)
-            pts = value * fontsize * cex
-            if utype == "lines":
-                pts *= lineheight
-            inches = pts / 72.0
-            return inches / vp_inches
-
-        if utype == "null":
-            return 0.0
-
-        if utype == "snpc":
-            other_px = eff_h if axis == "x" else eff_w
-            min_inches = min(vp_px, other_px) / self.dpi
-            inches = value * min_inches
-            return inches / vp_inches
-
-        if utype in ("strwidth", "strheight", "strascent", "strdescent"):
-            from ._size import calc_string_metric
-            text = str(unit_obj._data[0]) if unit_obj._data[0] is not None else ""
-            m = calc_string_metric(text, gp=gp)
-            if utype == "strwidth":
-                inches = m["width"]
-            elif utype == "strheight":
-                inches = m["ascent"] + m["descent"]
-            elif utype == "strascent":
-                inches = m["ascent"]
+                return transform_height_to_inches(
+                    unit_obj, 0, vtr.vpc,
+                    fontsize, cex, lineheight,
+                    vtr.width_cm, vtr.height_cm,
+                    self._str_metric_fn, None,
+                )
             else:
-                inches = m["descent"]
-            return (inches * value) / vp_inches
+                return transform_y_to_inches(
+                    unit_obj, 0, vtr.vpc,
+                    fontsize, cex, lineheight,
+                    vtr.width_cm, vtr.height_cm,
+                    self._str_metric_fn, None,
+                )
 
-        if utype in ("grobwidth", "grobheight", "grobascent", "grobdescent"):
-            from ._size import width_details, height_details, ascent_details, descent_details
-            grob_ref = unit_obj._data[0]
-            if grob_ref is not None:
-                dispatch = {
-                    "grobwidth": width_details,
-                    "grobheight": height_details,
-                    "grobascent": ascent_details,
-                    "grobdescent": descent_details,
-                }
-                metric_unit = dispatch[utype](grob_ref)
-                if metric_unit is not None and hasattr(metric_unit, "_units"):
-                    return self._resolve_to_npc(
-                        metric_unit, axis=axis, is_dim=True, gp=gp
-                    ) * value
-            return 0.0
-
-        if utype == "sum":
-            child = unit_obj._data[0]
-            if isinstance(child, Unit):
-                total = 0.0
-                for j in range(len(child)):
-                    elem = Unit(child._values[j], child._units[j], data=child._data[j])
-                    total += self._resolve_to_npc(elem, axis, is_dim, gp)
-                return total * value
-            return 0.0
-
-        if utype == "min":
-            child = unit_obj._data[0]
-            if isinstance(child, Unit):
-                best = float("inf")
-                for j in range(len(child)):
-                    elem = Unit(child._values[j], child._units[j], data=child._data[j])
-                    best = min(best, self._resolve_to_npc(elem, axis, is_dim, gp))
-                return best * value if best != float("inf") else 0.0
-            return 0.0
-
-        if utype == "max":
-            child = unit_obj._data[0]
-            if isinstance(child, Unit):
-                best = float("-inf")
-                for j in range(len(child)):
-                    elem = Unit(child._values[j], child._units[j], data=child._data[j])
-                    best = max(best, self._resolve_to_npc(elem, axis, is_dim, gp))
-                return best * value if best != float("-inf") else 0.0
-            return 0.0
-
-        # Fallback: treat as NPC
-        return value
-
-    # -- public convenience: resolve_to_npc (for external callers) --
-
-    def resolve_to_npc(
+    def _resolve_to_inches_idx(
         self,
         unit_obj: Any,
-        axis: str = "x",
-        is_dim: bool = False,
+        index: int,
+        axis: str,
+        is_dim: bool,
         gp: Optional[Any] = None,
     ) -> float:
-        """Public interface to unit resolution.
+        """Resolve element *index* of a Unit to inches."""
+        from ._units import Unit
+        if not isinstance(unit_obj, Unit):
+            return float(unit_obj)
 
-        Equivalent to ``_resolve_to_npc`` but with a stable public name.
+        vtr = self._vp_transform_stack[-1]
+        fontsize, cex, lineheight = self._gpar_font_params(gp)
+
+        return _transform_to_inches(
+            unit_obj, index, vtr.vpc,
+            fontsize, cex, lineheight,
+            this_cm=vtr.width_cm if axis == "x" else vtr.height_cm,
+            other_cm=vtr.height_cm if axis == "x" else vtr.width_cm,
+            axis=axis, is_dim=is_dim,
+            str_metric_fn=self._str_metric_fn,
+            grob_metric_fn=None,
+        )
+
+    # ===================================================================== #
+    # Inches → device coordinate conversion                                 #
+    # ===================================================================== #
+
+    def inches_to_dev_x(self, x_inches: float) -> float:
+        """Convert absolute x in inches to device x coordinate."""
+        return x_inches * self._dev_units_per_inch
+
+    def inches_to_dev_y(self, y_inches: float) -> float:
+        """Convert absolute y in inches to device y coordinate.
+
+        Applies Y-flip: in grid, y=0 is bottom; in device, y=0 is top.
         """
-        return self._resolve_to_npc(unit_obj, axis=axis, is_dim=is_dim, gp=gp)
+        return self._device_height - y_inches * self._dev_units_per_inch
 
-    # -- public convenience: scalar resolvers --
+    def inches_to_dev_w(self, w_inches: float) -> float:
+        """Convert width in inches to device width."""
+        return w_inches * self._dev_units_per_inch
+
+    def inches_to_dev_h(self, h_inches: float) -> float:
+        """Convert height in inches to device height."""
+        return h_inches * self._dev_units_per_inch
+
+    def transform_loc_to_device(
+        self, x_inches: float, y_inches: float,
+    ) -> Tuple[float, float]:
+        """Transform a location from viewport inches to device coordinates.
+
+        Port of R's transformLocn() + toDeviceX/Y():
+        1. Apply the current viewport's 3×3 transform to get absolute inches
+        2. Convert absolute inches to device coordinates
+        """
+        vtr = self._vp_transform_stack[-1]
+        loc = location(x_inches, y_inches)
+        abs_loc = trans(loc, vtr.transform)
+        dev_x = self.inches_to_dev_x(abs_loc[0])
+        dev_y = self.inches_to_dev_y(abs_loc[1])
+        return dev_x, dev_y
+
+    def transform_dim_to_device(
+        self, w_inches: float, h_inches: float,
+    ) -> Tuple[float, float]:
+        """Transform dimensions from viewport inches to device units.
+
+        For dimensions (widths/heights), we apply only the scaling/rotation
+        part of the transform (no translation).  For now, without rotation
+        we simply convert inches to device units.  When rotation is present,
+        the dimension scaling depends on the rotation angle.
+        """
+        vtr = self._vp_transform_stack[-1]
+        angle = vtr.rotation_angle
+        if abs(angle % 360) < 1e-10:
+            # No rotation: simple scaling
+            return (w_inches * self._dev_units_per_inch,
+                    h_inches * self._dev_units_per_inch)
+        else:
+            # With rotation, the effective device dimensions change.
+            # For a rotated viewport, widths and heights in viewport-local
+            # inches map to device units through the rotation.
+            rad = math.radians(angle)
+            cos_a = abs(math.cos(rad))
+            sin_a = abs(math.sin(rad))
+            dev_w = (w_inches * cos_a + h_inches * sin_a) * self._dev_units_per_inch
+            dev_h = (h_inches * cos_a + w_inches * sin_a) * self._dev_units_per_inch
+            return dev_w, dev_h
+
+    # ===================================================================== #
+    # Public convenience: resolve + transform (Unit → device coords)        #
+    # ===================================================================== #
 
     def resolve_x(self, val: Any, gp: Optional[Any] = None) -> float:
-        """Resolve *val* to an NPC x-coordinate."""
-        from ._units import Unit
-        if not isinstance(val, Unit):
-            return float(val)
-        return self._resolve_to_npc(val, axis="x", is_dim=False, gp=gp)
+        """Resolve *val* to a device x-coordinate."""
+        inches = self._resolve_to_inches(val, axis="x", is_dim=False, gp=gp)
+        dev_x, _ = self.transform_loc_to_device(inches, 0.0)
+        return dev_x
 
     def resolve_y(self, val: Any, gp: Optional[Any] = None) -> float:
-        """Resolve *val* to an NPC y-coordinate."""
-        from ._units import Unit
-        if not isinstance(val, Unit):
-            return float(val)
-        return self._resolve_to_npc(val, axis="y", is_dim=False, gp=gp)
+        """Resolve *val* to a device y-coordinate."""
+        inches = self._resolve_to_inches(val, axis="y", is_dim=False, gp=gp)
+        _, dev_y = self.transform_loc_to_device(0.0, inches)
+        return dev_y
 
     def resolve_w(self, val: Any, gp: Optional[Any] = None) -> float:
-        """Resolve *val* to an NPC width (fraction of viewport)."""
-        from ._units import Unit
-        if not isinstance(val, Unit):
-            return float(val)
-        return self._resolve_to_npc(val, axis="x", is_dim=True, gp=gp)
+        """Resolve *val* to a device width."""
+        inches = self._resolve_to_inches(val, axis="x", is_dim=True, gp=gp)
+        return self.inches_to_dev_w(inches)
 
     def resolve_h(self, val: Any, gp: Optional[Any] = None) -> float:
-        """Resolve *val* to an NPC height (fraction of viewport)."""
-        from ._units import Unit
-        if not isinstance(val, Unit):
-            return float(val)
-        return self._resolve_to_npc(val, axis="y", is_dim=True, gp=gp)
-
-    # -- public convenience: array resolvers --
+        """Resolve *val* to a device height."""
+        inches = self._resolve_to_inches(val, axis="y", is_dim=True, gp=gp)
+        return self.inches_to_dev_h(inches)
 
     def resolve_x_array(self, val: Any, gp: Optional[Any] = None) -> "np.ndarray":
-        """Resolve *val* to an array of NPC x-coordinates."""
+        """Resolve *val* to an array of device x-coordinates."""
         from ._units import Unit
         if isinstance(val, Unit):
             out = np.empty(len(val), dtype=float)
             for i in range(len(val)):
-                elem = Unit(val._values[i], val._units[i], data=val._data[i])
-                out[i] = self._resolve_to_npc(elem, "x", False, gp)
+                inches = self._resolve_to_inches_idx(val, i, "x", False, gp)
+                dev_x, _ = self.transform_loc_to_device(inches, 0.0)
+                out[i] = dev_x
             return out
         if isinstance(val, (list, tuple)):
             return np.asarray([self.resolve_x(v, gp) for v in val], dtype=float)
         return np.atleast_1d(np.asarray(val, dtype=float))
 
     def resolve_y_array(self, val: Any, gp: Optional[Any] = None) -> "np.ndarray":
-        """Resolve *val* to an array of NPC y-coordinates."""
+        """Resolve *val* to an array of device y-coordinates."""
         from ._units import Unit
         if isinstance(val, Unit):
             out = np.empty(len(val), dtype=float)
             for i in range(len(val)):
-                elem = Unit(val._values[i], val._units[i], data=val._data[i])
-                out[i] = self._resolve_to_npc(elem, "y", False, gp)
+                inches = self._resolve_to_inches_idx(val, i, "y", False, gp)
+                _, dev_y = self.transform_loc_to_device(0.0, inches)
+                out[i] = dev_y
             return out
         if isinstance(val, (list, tuple)):
             return np.asarray([self.resolve_y(v, gp) for v in val], dtype=float)
         return np.atleast_1d(np.asarray(val, dtype=float))
 
     def resolve_w_array(self, val: Any, gp: Optional[Any] = None) -> "np.ndarray":
-        """Resolve *val* to an array of NPC widths."""
+        """Resolve *val* to an array of device widths."""
         from ._units import Unit
         if isinstance(val, Unit):
             out = np.empty(len(val), dtype=float)
             for i in range(len(val)):
-                elem = Unit(val._values[i], val._units[i], data=val._data[i])
-                out[i] = self._resolve_to_npc(elem, "x", True, gp)
+                inches = self._resolve_to_inches_idx(val, i, "x", True, gp)
+                out[i] = self.inches_to_dev_w(inches)
             return out
         if isinstance(val, (list, tuple)):
             return np.asarray([self.resolve_w(v, gp) for v in val], dtype=float)
         return np.atleast_1d(np.asarray(val, dtype=float))
 
     def resolve_h_array(self, val: Any, gp: Optional[Any] = None) -> "np.ndarray":
-        """Resolve *val* to an array of NPC heights."""
+        """Resolve *val* to an array of device heights."""
         from ._units import Unit
         if isinstance(val, Unit):
             out = np.empty(len(val), dtype=float)
             for i in range(len(val)):
-                elem = Unit(val._values[i], val._units[i], data=val._data[i])
-                out[i] = self._resolve_to_npc(elem, "y", True, gp)
+                inches = self._resolve_to_inches_idx(val, i, "y", True, gp)
+                out[i] = self.inches_to_dev_h(inches)
             return out
         if isinstance(val, (list, tuple)):
             return np.asarray([self.resolve_h(v, gp) for v in val], dtype=float)
         return np.atleast_1d(np.asarray(val, dtype=float))
 
     # ===================================================================== #
-    # Coordinate helpers (NPC → device)                                     #
+    # Backward-compatible NPC resolution (for code not yet migrated)        #
     # ===================================================================== #
 
+    def _resolve_to_npc(
+        self, unit_obj: Any, axis: str, is_dim: bool, gp: Optional[Any] = None,
+    ) -> float:
+        """Backward-compatible NPC resolution.
+
+        Converts to inches first (new pipeline), then normalises to NPC
+        by dividing by the viewport size in inches.
+        """
+        inches = self._resolve_to_inches(unit_obj, axis, is_dim, gp)
+        vtr = self._vp_transform_stack[-1]
+        vp_inches = (vtr.width_cm if axis == "x" else vtr.height_cm) / 2.54
+        if vp_inches == 0:
+            return 0.0
+        return inches / vp_inches
+
+    def resolve_to_npc(
+        self, unit_obj: Any, axis: str = "x",
+        is_dim: bool = False, gp: Optional[Any] = None,
+    ) -> float:
+        """Public backward-compatible NPC resolution."""
+        return self._resolve_to_npc(unit_obj, axis=axis, is_dim=is_dim, gp=gp)
+
+    # ===================================================================== #
+    # Coordinate helpers: NPC → device (backward compatibility)             #
+    # ===================================================================== #
+    # These are still used by CairoRenderer draw_* methods that receive
+    # NPC values.  After full migration they can be removed.
+
     def _x(self, npc: float) -> float:
-        """Convert NPC x -> device x (within current viewport)."""
-        x0, y0, pw, ph, *_ = self._vp_stack[-1]
-        return x0 + npc * pw
+        """Convert NPC x -> device x (within current viewport).
+
+        DEPRECATED: use resolve_x() or transform_loc_to_device() instead.
+        """
+        vtr = self._vp_transform_stack[-1]
+        x_inches = npc * vtr.width_cm / 2.54
+        dev_x, _ = self.transform_loc_to_device(x_inches, 0.0)
+        return dev_x
 
     def _y(self, npc: float) -> float:
-        """Convert NPC y -> device y (Y-flip: 0=bottom, 1=top).
+        """Convert NPC y -> device y (Y-flip).
 
-        In device coords, y=0 is the top and increases downward.
-        In NPC, y=0 is the bottom and y=1 is the top.
+        DEPRECATED: use resolve_y() or transform_loc_to_device() instead.
         """
-        x0, y0, pw, ph, *_ = self._vp_stack[-1]
-        return y0 + (1.0 - npc) * ph
+        vtr = self._vp_transform_stack[-1]
+        y_inches = npc * vtr.height_cm / 2.54
+        _, dev_y = self.transform_loc_to_device(0.0, y_inches)
+        return dev_y
 
     def _sx(self, npc: float) -> float:
-        """Scale a width from NPC to device units."""
-        return npc * self._vp_stack[-1][2]
+        """Scale a width from NPC to device units.
+
+        DEPRECATED: use resolve_w() instead.
+        """
+        vtr = self._vp_transform_stack[-1]
+        w_inches = npc * vtr.width_cm / 2.54
+        return self.inches_to_dev_w(w_inches)
 
     def _sy(self, npc: float) -> float:
-        """Scale a height from NPC to device units."""
-        return npc * self._vp_stack[-1][3]
+        """Scale a height from NPC to device units.
+
+        DEPRECATED: use resolve_h() instead.
+        """
+        vtr = self._vp_transform_stack[-1]
+        h_inches = npc * vtr.height_cm / 2.54
+        return self.inches_to_dev_h(h_inches)
 
     # ===================================================================== #
     # Abstract methods: backend-specific clipping                           #
@@ -608,12 +749,10 @@ class GridRenderer(ABC):
 
     @abstractmethod
     def _apply_clip_rect(self, x0: float, y0: float, w: float, h: float) -> None:
-        """Apply a rectangular clip region in device coordinates."""
         ...
 
     @abstractmethod
     def _restore_clip(self) -> None:
-        """Restore from the most recent clip save."""
         ...
 
     # ===================================================================== #
@@ -621,42 +760,33 @@ class GridRenderer(ABC):
     # ===================================================================== #
 
     @abstractmethod
-    def save_state(self) -> None:
-        """Save the current graphics state (for path collection, etc.)."""
-        ...
+    def save_state(self) -> None: ...
 
     @abstractmethod
-    def restore_state(self) -> None:
-        """Restore the previously saved graphics state."""
-        ...
+    def restore_state(self) -> None: ...
 
     # ===================================================================== #
     # Abstract methods: path collection (fill/stroke grobs)                 #
     # ===================================================================== #
 
     @abstractmethod
-    def begin_path_collect(self, rule: str = "winding") -> None:
-        """Enter path-collecting mode."""
-        ...
+    def begin_path_collect(self, rule: str = "winding") -> None: ...
 
     @abstractmethod
-    def end_path_stroke(self, gp: Optional[Any] = None) -> None:
-        """End path collection with stroke only."""
-        ...
+    def end_path_stroke(self, gp: Optional[Any] = None) -> None: ...
 
     @abstractmethod
-    def end_path_fill(self, gp: Optional[Any] = None) -> None:
-        """End path collection with fill only."""
-        ...
+    def end_path_fill(self, gp: Optional[Any] = None) -> None: ...
 
     @abstractmethod
-    def end_path_fill_stroke(self, gp: Optional[Any] = None) -> None:
-        """End path collection with fill then stroke."""
-        ...
+    def end_path_fill_stroke(self, gp: Optional[Any] = None) -> None: ...
 
     # ===================================================================== #
     # Abstract methods: drawing primitives                                  #
     # ===================================================================== #
+    # All coordinates are now in DEVICE units (pixels for raster, points
+    # for vector).  The resolve_* methods handle the full pipeline:
+    # Unit → inches → transform → device.
 
     @abstractmethod
     def draw_rect(self, x: float, y: float, w: float, h: float,

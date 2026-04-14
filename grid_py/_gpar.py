@@ -503,9 +503,10 @@ def _default_gpar() -> Gpar:
 def get_gpar(names: Optional[Sequence[str]] = None) -> Gpar:
     """Return the current graphical parameters.
 
-    This is the Python equivalent of R's ``get.gpar()``.  In the current
-    implementation no graphics device state is tracked, so the function
-    simply returns the default ``Gpar``.
+    Port of R's ``get.gpar()`` (``gpar.R:275-293``).  Reads the live
+    gpar state from the GridState singleton (equivalent to R's
+    ``grid.Call(C_getGPar)`` which reads from ``GSS_GPAR``).
+    Falls back to defaults if no state is initialised.
 
     Parameters
     ----------
@@ -516,7 +517,7 @@ def get_gpar(names: Optional[Sequence[str]] = None) -> Gpar:
     Returns
     -------
     Gpar
-        A ``Gpar`` instance with the requested (or all default) parameters.
+        A ``Gpar`` instance with the requested (or all current) parameters.
 
     Raises
     ------
@@ -531,10 +532,30 @@ def get_gpar(names: Optional[Sequence[str]] = None) -> Gpar:
     >>> get_gpar(names=["col", "lwd"])
     Gpar(col='black', lwd=1.0)
     """
-    default = _default_gpar()
-    if names is None:
-        return default
+    # R: result <- grid.Call(C_getGPar)  — read from current device state
+    # R's C_getGPar returns the fully-resolved gpar from GSS_GPAR which
+    # already contains all default values.  We emulate this by merging
+    # the defaults with whatever the state stack currently holds.
+    defaults = _default_gpar()
+    try:
+        from ._state import get_state
+        state = get_state()
+        state_gp = state.get_gpar()
+    except Exception:
+        state_gp = None
 
+    # Build merged result: defaults overridden by state
+    merged = Gpar(**defaults._params)
+    if state_gp is not None:
+        for k, v in state_gp._params.items():
+            if v is not None:
+                merged._params[k] = v
+
+    if names is None:
+        return merged
+
+    # R: if (!is.character(names) || !all(names %in% .grid.gpar.names))
+    #        stop("must specify only valid 'gpar' names")
     invalid = set(names) - _GPAR_NAMES
     if invalid:
         raise ValueError(
@@ -543,8 +564,9 @@ def get_gpar(names: Optional[Sequence[str]] = None) -> Gpar:
 
     subset: Dict[str, Any] = {}
     for n in names:
-        if n in default._params:
-            subset[n] = default._params[n]
+        val = merged.get(n, None)
+        if val is not None:
+            subset[n] = val
     gp = object.__new__(Gpar)
     gp._params = subset
     return gp

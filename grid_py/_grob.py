@@ -646,8 +646,9 @@ class GTree(Grob):
     def add_child(self, child: Grob) -> None:
         """Add or replace a child grob.
 
-        If a child with the same name already exists it is replaced in-place
-        (preserving draw order).
+        If a child with the same name already exists, the old position is
+        removed and the child is **appended to the end** of the draw order.
+        This matches R's ``addToGTree`` (``grob.R:1208-1217``).
 
         Parameters
         ----------
@@ -657,9 +658,11 @@ class GTree(Grob):
             raise TypeError("can only add a Grob to a GTree")
         cname = child.name
         self._children[cname] = child
-        # If already in order list, leave it; otherwise append
-        if cname not in self._children_order:
-            self._children_order.append(cname)
+        # R: if (old.pos <- match(...)) childrenOrder <- childrenOrder[-old.pos]
+        #    childrenOrder <- c(childrenOrder, child$name)
+        if cname in self._children_order:
+            self._children_order.remove(cname)
+        self._children_order.append(cname)
 
     def remove_child(self, name: str) -> None:
         """Remove the child with the given *name*.

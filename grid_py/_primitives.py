@@ -654,53 +654,20 @@ def arrows_grob(
     """Create an *arrows* grob.
 
     .. deprecated::
-        The standalone arrows grob is defunct in R (>= 2.3.0).  Use the
-        ``arrow`` argument on line-drawing primitives instead.  This
-        constructor is retained for API completeness and backward
-        compatibility.
+        **Defunct** since R >= 2.3.0.  Use the ``arrow`` argument on
+        line-drawing primitives (e.g. ``lines_grob(..., arrow=...)``)
+        instead.
 
-    Parameters
-    ----------
-    x : Unit, numeric, or None
-        Horizontal coordinates.  Defaults to ``Unit([0.25, 0.75], "npc")``.
-    y : Unit, numeric, or None
-        Vertical coordinates.  Defaults to ``Unit(0.5, "npc")``.
-    default_units : str
-        Unit type for bare numerics.
-    arrow : Arrow or None
-        Arrow-head specification.  When ``None`` a default arrow is used
-        internally at draw time.
-    name : str or None
-        Grob name.
-    gp : Gpar or None
-        Graphical parameters.
-    vp : viewport or None
-        Optional viewport.
-
-    Returns
-    -------
-    Grob
-        A grob with ``_grid_class="arrows"``.
+    Raises
+    ------
+    NotImplementedError
+        Always.  Matches R's ``.Defunct()`` (``primitives.R:539``).
     """
-    import warnings
-
-    warnings.warn(
-        "'arrows_grob' is deprecated; use the 'arrow' argument on "
-        "line-drawing primitives instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    if x is None:
-        x = Unit([0.25, 0.75], "npc")
-    else:
-        x = _ensure_unit(x, default_units)
-    if y is None:
-        y = Unit(0.5, "npc")
-    else:
-        y = _ensure_unit(y, default_units)
-    return Grob(
-        x=x, y=y, arrow=arrow,
-        name=name, gp=gp, vp=vp, _grid_class="arrows",
+    # R: .Defunct(msg="'arrowsGrob' is defunct.\n
+    #            Use 'arrow' arguments to line-drawing primitives.")
+    raise NotImplementedError(
+        "'arrows_grob' is defunct. "
+        "Use the 'arrow' argument on line-drawing primitives instead."
     )
 
 
@@ -717,47 +684,20 @@ def grid_arrows(
     """Create and optionally draw an *arrows* grob.
 
     .. deprecated::
-        Use the ``arrow`` argument on line-drawing primitives instead.
+        **Defunct** since R >= 2.3.0.  Use the ``arrow`` argument on
+        line-drawing primitives instead.
 
-    Parameters
-    ----------
-    x : Unit, numeric, or None
-        Horizontal coordinates.
-    y : Unit, numeric, or None
-        Vertical coordinates.
-    default_units : str
-        Default unit type for bare numerics.
-    arrow : Arrow or None
-        Arrow-head specification.
-    name : str or None
-        Grob name.
-    gp : Gpar or None
-        Graphical parameters.
-    draw : bool
-        If ``True`` (default), record the grob for drawing.
-    vp : viewport or None
-        Optional viewport.
-
-    Returns
-    -------
-    Grob
-        The created grob.
+    Raises
+    ------
+    NotImplementedError
+        Always.  Matches R's ``.Defunct()`` (``primitives.R:543``).
     """
-    import warnings
-
-    warnings.warn(
-        "'grid_arrows' is deprecated; use the 'arrow' argument on "
-        "line-drawing primitives instead.",
-        DeprecationWarning,
-        stacklevel=2,
+    # R: .Defunct(msg="'grid.arrows' is defunct.\n
+    #            Use 'arrow' arguments to line-drawing primitives.")
+    raise NotImplementedError(
+        "'grid_arrows' is defunct. "
+        "Use the 'arrow' argument on line-drawing primitives instead."
     )
-    grob = arrows_grob(
-        x=x, y=y, default_units=default_units, arrow=arrow,
-        name=name, gp=gp, vp=vp,
-    )
-    if draw:
-        _grid_draw(grob)
-    return grob
 
 
 # ===================================================================== #
@@ -769,7 +709,7 @@ def points_grob(
     x: Any = None,
     y: Any = None,
     size: Optional[Any] = None,
-    default_units: str = "npc",
+    default_units: str = "native",
     pch: Union[int, str] = 1,
     name: Optional[str] = None,
     gp: Optional[Gpar] = None,
@@ -789,7 +729,8 @@ def points_grob(
     size : Unit, numeric, or None
         Symbol size.  Defaults to ``Unit(1, "char")`` when ``None``.
     default_units : str
-        Unit type for bare numerics (default ``"npc"``).
+        Unit type for bare numerics (default ``"native"``,
+        matching R's ``pointsGrob``).
     pch : int or str
         Plotting character / symbol code.
     name : str or None
