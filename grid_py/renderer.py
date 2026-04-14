@@ -388,9 +388,11 @@ class CairoRenderer(GridRenderer):
 
         col = gp.get("col", None)
         col_val = col[0] if isinstance(col, (list, tuple)) else col
-        # R semantics: col=NA (None) means "no border" → transparent
+        # R semantics: col=NA means "no border" → transparent.
+        # But col=None (unset) should fall back to the default black,
+        # matching R's get.gpar()$col default of "black".
         if col_val is None:
-            return (0.0, 0.0, 0.0, 0.0)
+            col_val = "black"
         rgba = _parse_colour(col_val)
 
         alpha = gp.get("alpha", None)

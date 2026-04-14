@@ -580,9 +580,17 @@ class TestRendererApplyStroke:
         assert rgba[3] == 0.0
 
     def test_stroke_col_none(self):
-        """col=None means no border."""
+        """col=None (unset) defaults to black, matching R's default."""
         r = CairoRenderer(width=5, height=4)
         gp = Gpar(col=None)
+        rgba = r._apply_stroke(gp)
+        # col=None means unset → default black (opaque)
+        assert rgba == (0.0, 0.0, 0.0, 1.0)
+
+    def test_stroke_col_na(self):
+        """col='NA' means no border (transparent)."""
+        r = CairoRenderer(width=5, height=4)
+        gp = Gpar(col="NA")
         rgba = r._apply_stroke(gp)
         assert rgba[3] == 0.0
 

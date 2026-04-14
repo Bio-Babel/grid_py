@@ -386,8 +386,8 @@ def _render_grob(
 def _push_grob_vp(vp: Any) -> None:
     """Push a grob's viewport (or navigate down for a VpPath).
 
-    Also updates the renderer's coordinate transform so that NPC [0,1]
-    maps to the viewport's sub-region, matching R's grid semantics.
+    ``push_viewport`` / ``down_viewport`` already synchronise the
+    renderer's coordinate transform, so no extra renderer call is needed.
 
     Parameters
     ----------
@@ -402,17 +402,12 @@ def _push_grob_vp(vp: Any) -> None:
     else:
         push_viewport(vp, recording=False)
 
-    # Update renderer coordinate transform
-    state = get_state()
-    renderer = state.get_renderer()
-    if renderer is not None and hasattr(renderer, "push_viewport"):
-        renderer.push_viewport(vp)
-
 
 def _pop_grob_vp(vp: Any) -> None:
     """Pop/navigate up from a grob's viewport.
 
-    Also restores the renderer's coordinate transform.
+    ``up_viewport`` already synchronises the renderer's coordinate
+    transform, so no extra renderer call is needed.
 
     Parameters
     ----------
@@ -420,17 +415,9 @@ def _pop_grob_vp(vp: Any) -> None:
         The viewport that was previously pushed.
     """
     from ._viewport import up_viewport
-    from ._path import VpPath
 
     d = _vp_depth(vp)
     up_viewport(d, recording=False)
-
-    # Restore renderer coordinate transform
-    state = get_state()
-    renderer = state.get_renderer()
-    if renderer is not None and hasattr(renderer, "pop_viewport"):
-        for _ in range(d):
-            renderer.pop_viewport()
 
 
 def _vp_depth(vp: Any) -> int:
@@ -480,8 +467,9 @@ def _push_vp_gp(grob: Grob) -> None:
 def _draw_grob(x: Grob) -> None:
     """Internal: draw a plain Grob (not a GTree).
 
-    Mirrors R's ``drawGrob``: saves gpar, calls preDraw (makeContext +
-    pushvpgp + preDrawDetails), makeContent, drawDetails, postDraw.
+    Mirrors R's ``drawGrob``: disables the display list, saves gpar,
+    calls preDraw (makeContext + pushvpgp + preDrawDetails),
+    makeContent, drawDetails, postDraw, then restores state.
 
     Parameters
     ----------
@@ -489,6 +477,11 @@ def _draw_grob(x: Grob) -> None:
         The grob to draw.
     """
     state = get_state()
+
+    # Temporarily disable DL so nested drawing calls are not recorded
+    # (mirrors R's grid.Call(C_setDLon, FALSE))
+    saved_dl_on = state._dl_on
+    state.set_display_list_on(False)
 
     # Save current gpar
     saved_gpar = copy.copy(state.get_gpar())
@@ -514,16 +507,18 @@ def _draw_grob(x: Grob) -> None:
         if x.vp is not None:
             _pop_grob_vp(x.vp)
     finally:
-        # Restore gpar
+        # Restore gpar and DL state
         state.set_gpar(saved_gpar)
+        state.set_display_list_on(saved_dl_on)
 
 
 def _draw_gtree(x: GTree) -> None:
     """Internal: draw a GTree.
 
-    Mirrors R's ``drawGTree``: saves gpar + current grob context, calls
-    preDraw (makeContext + pushvpgp + children vp + preDrawDetails),
-    makeContent, drawDetails, draws children in order, then postDraw.
+    Mirrors R's ``drawGTree``: disables the display list, saves gpar +
+    current grob context, calls preDraw (makeContext + setCurrentGrob +
+    pushvpgp + children vp + preDrawDetails), makeContent, drawDetails,
+    draws children in order, then postDraw, then restores state.
 
     Parameters
     ----------
@@ -532,12 +527,22 @@ def _draw_gtree(x: GTree) -> None:
     """
     state = get_state()
 
-    # Save state
+    # Temporarily disable DL so nested drawing calls are not recorded
+    saved_dl_on = state._dl_on
+    state.set_display_list_on(False)
+
+    # Save current grob and gpar (R: C_getCurrentGrob + C_getGPar)
     saved_gpar = copy.copy(state.get_gpar())
+    saved_current_grob = getattr(state, "_current_grob", None)
 
     try:
-        # preDraw: makeContext -> push vp/gp -> preDrawDetails
+        # preDraw.gTree: makeContext -> setCurrentGrob -> push vp/gp
         x = x.make_context()
+
+        # Set this gTree as current grob for gPath-based unit evaluation
+        # (mirrors R's grid.Call.graphics(C_setCurrentGrob, x))
+        state._current_grob = x
+
         _push_vp_gp(x)
 
         # Push children viewport if present, then navigate back up
@@ -567,12 +572,15 @@ def _draw_gtree(x: GTree) -> None:
             if child is not None:
                 grid_draw(child, recording=False)
 
-        # postDraw
+        # postDraw: postDrawDetails -> pop vp
         x.post_draw_details()
         if x.vp is not None:
             _pop_grob_vp(x.vp)
     finally:
+        # Restore gpar, current grob, and DL state
         state.set_gpar(saved_gpar)
+        state._current_grob = saved_current_grob
+        state.set_display_list_on(saved_dl_on)
 
 
 def _draw_glist(x: GList) -> None:

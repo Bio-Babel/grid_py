@@ -98,19 +98,16 @@ _display_list: List[Grob] = []
 
 
 def _grid_draw(grob: Grob) -> None:
-    """Append *grob* to the module-level display list.
+    """Draw *grob* via the rendering back-end and record it.
 
     Parameters
     ----------
     grob : Grob
-        The graphical object to record for later rendering.
-
-    Notes
-    -----
-    This is a placeholder.  A real rendering back-end will consume
-    ``_display_list`` entries and convert them to drawing commands.
+        The graphical object to draw and record.
     """
-    _display_list.append(grob)
+    from ._draw import grid_draw  # lazy import to avoid circular dependency
+
+    grid_draw(grob, recording=True)
 
 
 # ---------------------------------------------------------------------------

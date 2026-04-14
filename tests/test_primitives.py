@@ -432,8 +432,12 @@ class TestGridDrawFalse:
         assert len(_display_list) == 0
 
     def test_grid_rect_draw(self):
+        from grid_py._state import get_state
+        from grid_py._draw import grid_newpage
+        grid_newpage()
         g = grid_rect(draw=True)
-        assert len(_display_list) == 1
+        dl = get_state().get_display_list()
+        assert len(dl) >= 1
 
     def test_grid_circle_no_draw(self):
         g = grid_circle(draw=False)
@@ -497,5 +501,9 @@ class TestGridDrawFalse:
         assert len(_display_list) == 0
 
     def test_grid_function_draw(self):
+        from grid_py._state import get_state
+        from grid_py._draw import grid_newpage
+        grid_newpage()
         g = grid_function(lambda t: t, draw=True)
-        assert len(_display_list) == 1
+        dl = get_state().get_display_list()
+        assert len(dl) >= 1
