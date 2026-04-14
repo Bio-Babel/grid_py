@@ -931,8 +931,130 @@ def _get_state() -> Any:
 
 
 # ---------------------------------------------------------------------------
+# Gpar restoration helper for viewport navigation
+# ---------------------------------------------------------------------------
+
+
+def _restore_gpar_for_up(state: Any, n: int) -> None:
+    """Restore gpar when navigating up/popping *n* viewports.
+
+    Mirrors R's ``L_upviewport`` / ``L_unsetviewport``:
+    walk *n* parent links from the current viewport to find the
+    outermost viewport being left, then replace the global gpar
+    with that viewport's ``parentgpar`` (the gpar that was active
+    *before* that viewport was pushed).
+
+    If *n* is 0 (meaning "to root"), the actual depth is computed
+    first, matching R's ``popViewport(0)`` → ``n <- vpDepth()``.
+
+    Parameters
+    ----------
+    state : GridState
+        The current grid state singleton.
+    n : int
+        Number of levels to navigate up (0 = to root).
+    """
+    from ._state import _vp_parent, _vp_attr  # noqa: WPS433
+
+    vp = state.current_viewport()
+    if vp is None:
+        return
+
+    # n == 0 means "all the way to root".  Compute actual depth.
+    if n == 0:
+        actual_n = 0
+        walk = vp
+        while _vp_parent(walk) is not None:
+            actual_n += 1
+            walk = _vp_parent(walk)
+        n = actual_n
+
+    if n <= 0:
+        return  # already at root
+
+    # Walk n-1 parents from current viewport.
+    # After the loop, *vp* is the outermost viewport being left.
+    # R's C code: for (i = 1; i < n; i++) gvp = parent;
+    for _ in range(n - 1):
+        parent = _vp_parent(vp)
+        if parent is None:
+            break
+        vp = parent
+
+    # R: C_setGPar(VECTOR_ELT(gvp, PVP_PARENTGPAR))
+    pgp = _vp_attr(vp, "parentgpar", None)
+    if pgp is not None:
+        state.replace_gpar(pgp)
+
+
+# ---------------------------------------------------------------------------
+# Renderer-stack synchronisation helper
+# ---------------------------------------------------------------------------
+
+
+def _rebuild_renderer_stack(state: Any, renderer: Any) -> None:
+    """Reset the renderer's coordinate stack and rebuild it from root to current vp.
+
+    Walks from ``state.current_viewport()`` up to the root to collect the
+    path, then pushes each viewport onto the renderer in order.
+    """
+    from ._state import _vp_parent  # noqa: WPS433
+
+    # Collect viewports from current → root (excluding the root sentinel).
+    path: list = []
+    vp = state.current_viewport()
+    while vp is not None:
+        parent = _vp_parent(vp)
+        if parent is None:
+            break  # vp is the root — don't include it
+        path.append(vp)
+        vp = parent
+    path.reverse()
+
+    # Reset renderer to root, then re-push the path.
+    renderer.pop_viewport_to_root()
+    for vp in path:
+        renderer.push_viewport(vp)
+
+
+# ---------------------------------------------------------------------------
 # Navigation functions
 # ---------------------------------------------------------------------------
+
+
+def _push_single_vp(vp: Viewport, state: Any, renderer: Any) -> None:
+    """Push a single :class:`Viewport` onto the stack with full gpar handling.
+
+    Mirrors R's ``push.vp.viewport`` (grid.R:31-53):
+
+    1. ``vp.parentgpar ← current gpar`` — snapshot before push.
+    2. Merge ``vp._gp`` into current gpar (``set.gpar`` semantics:
+       cex/alpha/lex are multiplicatively cumulative).
+    3. ``vp.gpar ← merged gpar`` — snapshot after merge.
+    4. Replace the global gpar with the merged result.
+    5. Push the viewport onto the state tree and renderer stack.
+    """
+    from ._gpar import Gpar
+
+    # 1. Store parent gpar on the viewport (R: vp$parentgpar <- C_getGPar)
+    current_gpar = state.get_gpar()
+    vp.parentgpar = copy.copy(current_gpar)
+
+    # 2-3. Merge vp._gp into current gpar → vp.gpar  (R: set.gpar(vp$gp))
+    vp_gp = getattr(vp, "_gp", None)
+    if vp_gp is not None and len(vp_gp) > 0:
+        merged = vp_gp._merge(current_gpar)
+    else:
+        merged = copy.copy(current_gpar)
+    vp.gpar = merged
+
+    # 4. Replace global gpar (R: grid.Call.graphics(C_setGPar, temp))
+    state.replace_gpar(merged)
+
+    # 5. Push viewport onto state tree and renderer
+    state.push_viewport(vp)
+    if renderer is not None and hasattr(renderer, "push_viewport"):
+        renderer.push_viewport(vp)
 
 
 def push_viewport(
@@ -944,6 +1066,9 @@ def push_viewport(
     Each argument is pushed in order.  A :class:`Viewport` is pushed
     directly; container types (:class:`VpList`, :class:`VpStack`,
     :class:`VpTree`) are traversed according to their semantics.
+
+    Mirrors R's ``pushViewport`` (grid.R:96-104) including gpar
+    save/merge/restore on each viewport push.
 
     Parameters
     ----------
@@ -960,12 +1085,51 @@ def push_viewport(
     if len(args) == 0:
         raise ValueError("must specify at least one viewport")
     state = _get_state()
+    renderer = state.get_renderer()
     for vp in args:
-        state.push_viewport(vp)
+        _push_vp(vp, state, renderer, recording)
+
+
+def _push_vp(
+    vp: Any, state: Any, renderer: Any, recording: bool
+) -> None:
+    """Dispatch a single viewport-like object for pushing.
+
+    Mirrors R's ``push.vp`` S3 dispatch (grid.R:24-90).
+    """
+    if isinstance(vp, Viewport):
+        _push_single_vp(vp, state, renderer)
+    elif isinstance(vp, VpPath):
+        # R: push.vp.vpPath → downViewport(vp, strict=TRUE)
+        down_viewport(vp, strict=True, recording=recording)
+    elif isinstance(vp, VpStack):
+        # R: push.vp.vpStack → lapply(vp, push.vp)
+        for child in vp:
+            _push_vp(child, state, renderer, recording)
+    elif isinstance(vp, VpList):
+        # R: push.vp.vpList → push all but last + upViewport, then push last
+        n = len(vp)
+        for i, child in enumerate(vp):
+            _push_vp(child, state, renderer, recording)
+            if i < n - 1:
+                up_viewport(depth(child), recording=recording)
+    elif isinstance(vp, VpTree):
+        # R: push.vp.vpTree → push parent, then push children (VpList)
+        parent = vp.parent
+        if not (isinstance(parent, Viewport) and parent.name == "ROOT"):
+            _push_vp(parent, state, renderer, recording)
+        _push_vp(vp.children, state, renderer, recording)
+    else:
+        # Fallback: treat as a plain viewport
+        _push_single_vp(vp, state, renderer)
 
 
 def pop_viewport(n: int = 1, recording: bool = True) -> None:
     """Pop *n* viewports from the viewport stack.
+
+    Mirrors R's ``popViewport`` (grid.R:211-225) + ``L_unsetviewport``
+    (grid.c:885-1014): removes viewports from the tree and restores
+    the ``parentgpar`` stored on the outermost popped viewport.
 
     Parameters
     ----------
@@ -983,7 +1147,22 @@ def pop_viewport(n: int = 1, recording: bool = True) -> None:
     if n < 0:
         raise ValueError("must pop at least one viewport")
     state = _get_state()
+    renderer = state.get_renderer()
+
+    # Restore gpar: walk *n* parents to find the outermost popped vp,
+    # then use its parentgpar.  (R: C_setGPar(gvp$parentgpar))
+    # Must read before state.pop_viewport removes the viewports.
+    _restore_gpar_for_up(state, n)
+
     state.pop_viewport(n)
+    # Synchronise the renderer's coordinate transform
+    if renderer is not None:
+        if n == 0:
+            if hasattr(renderer, "pop_viewport_to_root"):
+                renderer.pop_viewport_to_root()
+        elif hasattr(renderer, "pop_viewport"):
+            for _ in range(n):
+                renderer.pop_viewport()
 
 
 def up_viewport(n: int = 1, recording: bool = True) -> Optional[VpPath]:
@@ -1029,7 +1208,20 @@ def up_viewport(n: int = 1, recording: bool = True) -> Optional[VpPath]:
             if tail:
                 up_path = VpPath(tail)
 
+    # Restore gpar before navigating (must read current vp first).
+    # R's L_upviewport: C_setGPar(gvp$parentgpar)
+    _restore_gpar_for_up(state, n)
+
     state.up_viewport(n)
+    # Synchronise the renderer's coordinate transform
+    renderer = state.get_renderer()
+    if renderer is not None:
+        if n == 0:
+            if hasattr(renderer, "pop_viewport_to_root"):
+                renderer.pop_viewport_to_root()
+        elif hasattr(renderer, "pop_viewport"):
+            for _ in range(n):
+                renderer.pop_viewport()
     return up_path
 
 
@@ -1057,7 +1249,19 @@ def down_viewport(
     if isinstance(name, str):
         name = VpPath(name)
     state = _get_state()
-    return state.down_viewport(str(name), strict=strict)
+    depth = state.down_viewport(str(name), strict=strict)
+    # Synchronise the renderer's coordinate transform: rebuild the stack
+    # from root to the new current viewport.
+    renderer = state.get_renderer()
+    if renderer is not None and hasattr(renderer, "pop_viewport_to_root"):
+        _rebuild_renderer_stack(state, renderer)
+    # Restore gpar for the target viewport (R: grid.R:173-175).
+    # R's downViewport.vpPath: grid.Call.graphics(C_setGPar, pvp$gpar)
+    target_vp = state.current_viewport()
+    target_gpar = getattr(target_vp, "gpar", None)
+    if target_gpar is not None:
+        state.replace_gpar(target_gpar)
+    return depth
 
 
 def seek_viewport(name: str, recording: bool = True) -> int:

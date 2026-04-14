@@ -491,6 +491,17 @@ class GridState:
         """
         self._gpar_stack.append(gp)
 
+    def replace_gpar(self, gp: Gpar) -> None:
+        """Replace the current (top-of-stack) graphical parameters.
+
+        Unlike :meth:`set_gpar`, this does **not** grow the stack; it
+        overwrites the most-recent entry.  This mirrors R's
+        ``C_setGPar`` which is a simple slot replacement on the device
+        state, used by viewport push/pop/up/down to update gpar without
+        creating a new stack frame.
+        """
+        self._gpar_stack[-1] = gp
+
     # ---- display list -----------------------------------------------------
 
     @property

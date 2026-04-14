@@ -207,6 +207,11 @@ class GridRenderer(ABC):
                 if had_clip:
                     self._restore_clip()
 
+    def pop_viewport_to_root(self) -> None:
+        """Pop all viewports back to the root (device-level) entry."""
+        while len(self._vp_stack) > 1:
+            self.pop_viewport()
+
     # ===================================================================== #
     # Layout computation (shared)                                           #
     # ===================================================================== #
