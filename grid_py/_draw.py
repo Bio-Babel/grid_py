@@ -135,6 +135,24 @@ def _unit_to_array(val: Any) -> np.ndarray:
     return np.atleast_1d(np.asarray(val, dtype=float))
 
 
+# Registry for custom grob renderers. Maps _grid_class string to a
+# callable(grob, renderer, gp) that performs the rendering.
+_GROB_RENDERERS: Dict[str, Callable] = {}
+
+
+def register_grob_renderer(cls_name: str, fn: Callable) -> None:
+    """Register a custom renderer for a grob class.
+
+    Parameters
+    ----------
+    cls_name : str
+        The ``_grid_class`` value to handle.
+    fn : callable
+        A function ``(grob, renderer, gp) -> None`` that renders the grob.
+    """
+    _GROB_RENDERERS[cls_name] = fn
+
+
 def _render_grob(
     grob: Grob,
     renderer: Any,
@@ -350,7 +368,8 @@ def _render_grob(
             renderer.restore_state()
 
     # ---- null / gTree / base grob – no-op --------------------------------
-    elif cls in ("null", "grob", "gTree"):
+    elif cls in ("null", "grob", "gTree", "frame", "cellGrob",
+                 "xaxis", "yaxis", "delayedgrob", "recordedGrob"):
         pass
 
     # ---- move.to / line.to -----------------------------------------------
@@ -366,6 +385,9 @@ def _render_grob(
             renderer.resolve_y(getattr(grob, "y", 0.0), gp=gp),
             gp=gp,
         )
+
+    elif cls in _GROB_RENDERERS:
+        _GROB_RENDERERS[cls](grob, renderer, gp)
 
     else:
         warnings.warn(
@@ -508,7 +530,7 @@ def _draw_grob(x: Grob) -> None:
             _pop_grob_vp(x.vp)
     finally:
         # Restore gpar and DL state
-        state.set_gpar(saved_gpar)
+        state.replace_gpar(saved_gpar)
         state.set_display_list_on(saved_dl_on)
 
 
@@ -578,7 +600,7 @@ def _draw_gtree(x: GTree) -> None:
             _pop_grob_vp(x.vp)
     finally:
         # Restore gpar, current grob, and DL state
-        state.set_gpar(saved_gpar)
+        state.replace_gpar(saved_gpar)
         state._current_grob = saved_current_grob
         state.set_display_list_on(saved_dl_on)
 

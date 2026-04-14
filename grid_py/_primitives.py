@@ -14,9 +14,8 @@ Each primitive follows a consistent three-part pattern:
 
 Notes
 -----
-Actual rendering is deferred -- when ``draw=True`` the grob is appended to
-the module-level ``_display_list`` and will be consumed by a future rendering
-back-end.  When ``draw=False`` the grob is simply returned.
+When ``draw=True`` the grob is passed to :func:`grid_draw` for immediate
+rendering.  When ``draw=False`` the grob is simply returned.
 """
 
 from __future__ import annotations
@@ -89,13 +88,6 @@ __all__ = [
     "function_grob",
     "grid_function",
 ]
-
-# ---------------------------------------------------------------------------
-# Module-level display list (placeholder for future rendering back-end)
-# ---------------------------------------------------------------------------
-
-_display_list: List[Grob] = []
-
 
 def _grid_draw(grob: Grob) -> None:
     """Draw *grob* via the rendering back-end and record it.
@@ -1942,6 +1934,50 @@ def grid_null(
 # ===================================================================== #
 
 
+class _FunctionGrob(Grob):
+    """A grob that evaluates a function and renders as a lines grob."""
+
+    def __init__(self, fn, n, range, units, **kwargs):
+        super().__init__(f=fn, n=n, range=range, units=units,
+                         _grid_class="functiongrob", **kwargs)
+
+    def make_content(self):
+        """Evaluate the function and return a lines grob.
+
+        Mirrors R's ``makeContent.functiongrob`` (function.R:43-47).
+        """
+        fn = self.f
+        n = self.n
+        rng = self.range
+        units = getattr(self, "units", "native")
+
+        if isinstance(rng, str) and rng == "x":
+            from ._viewport import current_viewport
+            vp = current_viewport()
+            xscale = getattr(vp, "_xscale", None) or getattr(vp, "xscale", [0, 1])
+            t = [xscale[0] + i * (xscale[1] - xscale[0]) / n for i in range(n + 1)]
+        elif isinstance(rng, str) and rng == "y":
+            from ._viewport import current_viewport
+            vp = current_viewport()
+            yscale = getattr(vp, "_yscale", None) or getattr(vp, "yscale", [0, 1])
+            t = [yscale[0] + i * (yscale[1] - yscale[0]) / n for i in range(n + 1)]
+        else:
+            rng = list(rng)
+            t = [rng[0] + i * (rng[1] - rng[0]) / n for i in range(n + 1)]
+
+        results = [fn(ti) for ti in t]
+        x_vals = t
+        y_vals = results
+
+        return lines_grob(
+            x=Unit(x_vals, units),
+            y=Unit(y_vals, units),
+            name=self._name,
+            gp=self.gp,
+            vp=self.vp,
+        )
+
+
 def function_grob(
     fn: Callable[..., Any],
     n: int = 101,
@@ -1994,9 +2030,9 @@ def function_grob(
         raise ValueError("'n' must be >= 1")
     if not callable(fn):
         raise TypeError("'fn' must be callable")
-    return Grob(
-        f=fn, n=n, range=range, units=units,
-        name=name, gp=gp, vp=vp, _grid_class="functiongrob",
+    return _FunctionGrob(
+        fn=fn, n=n, range=range, units=units,
+        name=name, gp=gp, vp=vp,
     )
 
 

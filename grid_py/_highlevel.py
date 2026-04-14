@@ -993,6 +993,58 @@ def _update_ylabels(x: GTree) -> GTree:
     return add_grob(x, _make_yaxis_labels(x.at, x.label, x.main))
 
 
+class _XAxisGTree(GTree):
+    """GTree subclass for x-axis with on-the-fly tick generation."""
+
+    def __init__(self, at, label, main, edits, **kwargs):
+        super().__init__(_grid_class="xaxis", at=at, label=label,
+                         main=main, edits=edits, **kwargs)
+
+    def make_content(self):
+        at = getattr(self, "at", None)
+        if at is None:
+            from ._viewport import current_viewport
+            vp = current_viewport()
+            xscale = getattr(vp, "_xscale", None) or getattr(vp, "xscale", [0, 1])
+            at = grid_pretty(xscale)
+            self.at = at
+            main = getattr(self, "main", True)
+            label = getattr(self, "label", True)
+            self = add_grob(self, _make_xaxis_major(at, main))
+            self = add_grob(self, _make_xaxis_ticks(at, main))
+            self = _update_xlabels(self)
+            edits = getattr(self, "edits", None)
+            if edits is not None:
+                self = apply_edits(self, edits)
+        return self
+
+
+class _YAxisGTree(GTree):
+    """GTree subclass for y-axis with on-the-fly tick generation."""
+
+    def __init__(self, at, label, main, edits, **kwargs):
+        super().__init__(_grid_class="yaxis", at=at, label=label,
+                         main=main, edits=edits, **kwargs)
+
+    def make_content(self):
+        at = getattr(self, "at", None)
+        if at is None:
+            from ._viewport import current_viewport
+            vp = current_viewport()
+            yscale = getattr(vp, "_yscale", None) or getattr(vp, "yscale", [0, 1])
+            at = grid_pretty(yscale)
+            self.at = at
+            main = getattr(self, "main", True)
+            label = getattr(self, "label", True)
+            self = add_grob(self, _make_yaxis_major(at, main))
+            self = add_grob(self, _make_yaxis_ticks(at, main))
+            self = _update_ylabels(self)
+            edits = getattr(self, "edits", None)
+            if edits is not None:
+                self = apply_edits(self, edits)
+        return self
+
+
 # ---------------------------------------------------------------------------
 # Public axis constructors
 # ---------------------------------------------------------------------------
@@ -1087,16 +1139,10 @@ def grid_xaxis(
             labels = _make_xaxis_labels(at, label, main)
 
     children_list = [g for g in (major, ticks, labels) if g is not None]
-    xg = GTree(
+    xg = _XAxisGTree(
+        at=at, label=label, main=main, edits=edits,
         children=GList(*children_list) if children_list else None,
-        name=name,
-        gp=gp,
-        vp=vp,
-        _grid_class="xaxis",
-        at=at,
-        label=label,
-        main=main,
-        edits=edits,
+        name=name, gp=gp, vp=vp,
     )
     if edits is not None:
         xg = apply_edits(xg, edits)
@@ -1193,16 +1239,10 @@ def grid_yaxis(
             labels = _make_yaxis_labels(at, label, main)
 
     children_list = [g for g in (major, ticks, labels) if g is not None]
-    yg = GTree(
+    yg = _YAxisGTree(
+        at=at, label=label, main=main, edits=edits,
         children=GList(*children_list) if children_list else None,
-        name=name,
-        gp=gp,
-        vp=vp,
-        _grid_class="yaxis",
-        at=at,
-        label=label,
-        main=main,
-        edits=edits,
+        name=name, gp=gp, vp=vp,
     )
     if edits is not None:
         yg = apply_edits(yg, edits)

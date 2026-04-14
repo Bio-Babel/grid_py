@@ -14,7 +14,6 @@ from grid_py._grob import Grob, _reset_auto_name, is_grob
 from grid_py._gpar import Gpar
 from grid_py._units import Unit, is_unit
 from grid_py._primitives import (
-    _display_list,
     rect_grob,
     grid_rect,
     circle_grob,
@@ -56,11 +55,9 @@ from grid_py._primitives import (
 
 @pytest.fixture(autouse=True)
 def reset_state():
-    """Reset auto-name counter and display list before every test."""
+    """Reset auto-name counter before every test."""
     _reset_auto_name()
-    _display_list.clear()
     yield
-    _display_list.clear()
     _reset_auto_name()
 
 
@@ -429,7 +426,6 @@ class TestGridDrawFalse:
         g = grid_rect(draw=False)
         assert is_grob(g)
         assert g._grid_class == "rect"
-        assert len(_display_list) == 0
 
     def test_grid_rect_draw(self):
         from grid_py._state import get_state
@@ -441,64 +437,64 @@ class TestGridDrawFalse:
 
     def test_grid_circle_no_draw(self):
         g = grid_circle(draw=False)
-        assert len(_display_list) == 0
+        assert g is not None
         assert g._grid_class == "circle"
 
     def test_grid_lines_no_draw(self):
         g = grid_lines(draw=False)
-        assert len(_display_list) == 0
+        assert g is not None
 
     def test_grid_polyline_no_draw(self):
         g = grid_polyline(draw=False)
-        assert len(_display_list) == 0
+        assert g is not None
 
     def test_grid_segments_no_draw(self):
         g = grid_segments(draw=False)
-        assert len(_display_list) == 0
+        assert g is not None
 
     def test_grid_points_no_draw(self):
         g = grid_points(draw=False)
-        assert len(_display_list) == 0
+        assert g is not None
 
     def test_grid_text_no_draw(self):
         g = grid_text("hello", draw=False)
-        assert len(_display_list) == 0
+        assert g is not None
 
     def test_grid_polygon_no_draw(self):
         g = grid_polygon(draw=False)
-        assert len(_display_list) == 0
+        assert g is not None
 
     def test_grid_path_no_draw(self):
         g = grid_path(draw=False)
-        assert len(_display_list) == 0
+        assert g is not None
 
     def test_grid_raster_no_draw(self):
         g = grid_raster([[0]], draw=False)
-        assert len(_display_list) == 0
+        assert g is not None
 
     def test_grid_null_no_draw(self):
         g = grid_null(draw=False)
-        assert len(_display_list) == 0
+        assert g is not None
 
     def test_grid_move_to_no_draw(self):
         g = grid_move_to(draw=False)
-        assert len(_display_list) == 0
+        assert g is not None
 
     def test_grid_line_to_no_draw(self):
         g = grid_line_to(draw=False)
-        assert len(_display_list) == 0
+        assert g is not None
 
     def test_grid_clip_no_draw(self):
         g = grid_clip(draw=False)
-        assert len(_display_list) == 0
+        assert g is not None
 
     def test_grid_roundrect_no_draw(self):
         g = grid_roundrect(draw=False)
-        assert len(_display_list) == 0
+        assert g is not None
 
     def test_grid_function_no_draw(self):
         g = grid_function(lambda t: t, draw=False)
-        assert len(_display_list) == 0
+        assert g is not None
 
     def test_grid_function_draw(self):
         from grid_py._state import get_state
