@@ -221,6 +221,9 @@ class GridState:
         # GSS_SCALE: zoom factor for physical units (R unit.c:804-814)
         # R grid state slot 15.  Default 1.0, set by grid.newpage(zoom=).
         self._scale: float = 1.0
+        # GSS_GROUPS: group registry for define/use (R grid.h:63, state.c:51)
+        # Maps group name → dict with keys: ref, xy, xyin, wh, r, etc.
+        self._groups: Dict[str, Any] = {}
 
     # ---- reset ------------------------------------------------------------
 
@@ -564,6 +567,44 @@ class GridState:
             ``True`` to enable, ``False`` to disable.
         """
         self._dl_on = bool(on)
+
+    # ---- group registry (R GSS_GROUPS, grid.h:63) -------------------------
+
+    def record_group(self, name: str, group_data: Dict[str, Any]) -> None:
+        """Register a group definition for later reuse.
+
+        Port of R ``recordGroup()`` (group.R:65-104).
+
+        Parameters
+        ----------
+        name : str
+            Group name (must match the DefineGrob name).
+        group_data : dict
+            Group metadata including ``ref`` (renderer-specific handle),
+            ``xy``, ``xyin``, ``wh``, ``r`` (rotation).
+        """
+        self._groups[name] = group_data
+
+    def lookup_group(self, name: str) -> Optional[Dict[str, Any]]:
+        """Look up a previously defined group.
+
+        Port of R ``lookupGroup()`` (group.R:106-110).
+
+        Parameters
+        ----------
+        name : str
+            Group name.
+
+        Returns
+        -------
+        dict or None
+            Group metadata, or ``None`` if not found.
+        """
+        return self._groups.get(name)
+
+    def clear_groups(self) -> None:
+        """Remove all group definitions."""
+        self._groups.clear()
 
     # ---- device binding ---------------------------------------------------
 

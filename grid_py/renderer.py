@@ -1506,3 +1506,134 @@ class CairoRenderer(GridRenderer):
 
         ctx.restore()
         return {"ascent": ascent, "descent": descent, "width": width}
+
+    # ---- group compositing (R 4.1+ / group.R) -------------------------------
+
+    # Porter-Duff + PDF blend mode → Cairo operator mapping
+    # R group.R:272-287 lists all valid operators.
+    _CAIRO_OPERATOR_MAP = {
+        "clear": cairo.OPERATOR_CLEAR,
+        "source": cairo.OPERATOR_SOURCE,
+        "over": cairo.OPERATOR_OVER,
+        "in": cairo.OPERATOR_IN,
+        "out": cairo.OPERATOR_OUT,
+        "atop": cairo.OPERATOR_ATOP,
+        "dest": cairo.OPERATOR_DEST,
+        "dest.over": cairo.OPERATOR_DEST_OVER,
+        "dest.in": cairo.OPERATOR_DEST_IN,
+        "dest.out": cairo.OPERATOR_DEST_OUT,
+        "dest.atop": cairo.OPERATOR_DEST_ATOP,
+        "xor": cairo.OPERATOR_XOR,
+        "add": cairo.OPERATOR_ADD,
+        "saturate": cairo.OPERATOR_SATURATE,
+        # PDF blend modes (pycairo ≥ 1.12)
+        "multiply": getattr(cairo, "OPERATOR_MULTIPLY", cairo.OPERATOR_OVER),
+        "screen": getattr(cairo, "OPERATOR_SCREEN", cairo.OPERATOR_OVER),
+        "overlay": getattr(cairo, "OPERATOR_OVERLAY", cairo.OPERATOR_OVER),
+        "darken": getattr(cairo, "OPERATOR_DARKEN", cairo.OPERATOR_OVER),
+        "lighten": getattr(cairo, "OPERATOR_LIGHTEN", cairo.OPERATOR_OVER),
+        "color.dodge": getattr(cairo, "OPERATOR_COLOR_DODGE", cairo.OPERATOR_OVER),
+        "color.burn": getattr(cairo, "OPERATOR_COLOR_BURN", cairo.OPERATOR_OVER),
+        "hard.light": getattr(cairo, "OPERATOR_HARD_LIGHT", cairo.OPERATOR_OVER),
+        "soft.light": getattr(cairo, "OPERATOR_SOFT_LIGHT", cairo.OPERATOR_OVER),
+        "difference": getattr(cairo, "OPERATOR_DIFFERENCE", cairo.OPERATOR_OVER),
+        "exclusion": getattr(cairo, "OPERATOR_EXCLUSION", cairo.OPERATOR_OVER),
+    }
+
+    def define_group(
+        self, src_fn: Any, op: str = "over", dst_fn: Any = None,
+    ) -> Any:
+        """Define a compositing group on the Cairo surface.
+
+        Port of R ``.defineGroup(src, op, dst)`` (group.R:263,302).
+        Uses ``cairo.Context.push_group()`` / ``pop_group()`` to capture
+        source and destination content, then composites them.
+
+        Parameters
+        ----------
+        src_fn : callable
+            Function that draws the source content.
+        op : str
+            Compositing operator name.
+        dst_fn : callable or None
+            Function that draws the destination content (None = transparent).
+
+        Returns
+        -------
+        cairo.Pattern or None
+            The composited group as a pattern, or None on failure.
+        """
+        ctx = self._ctx
+        cairo_op = self._CAIRO_OPERATOR_MAP.get(op, cairo.OPERATOR_OVER)
+
+        try:
+            # Draw destination first (if any)
+            if dst_fn is not None:
+                ctx.push_group()
+                dst_fn()
+                dst_pattern = ctx.pop_group()
+            else:
+                dst_pattern = None
+
+            # Draw source
+            ctx.push_group()
+            src_fn()
+            src_pattern = ctx.pop_group()
+
+            # Composite: dst first, then src with operator
+            ctx.push_group()
+
+            if dst_pattern is not None:
+                ctx.set_source(dst_pattern)
+                ctx.paint()
+
+            ctx.set_operator(cairo_op)
+            ctx.set_source(src_pattern)
+            ctx.paint()
+            ctx.set_operator(cairo.OPERATOR_OVER)
+
+            result = ctx.pop_group()
+            return result
+
+        except Exception:
+            return None
+
+    def use_group(self, ref: Any, transform: Any = None) -> None:
+        """Draw a previously defined group, optionally with a transform.
+
+        Port of R ``.useGroup(ref, transform)`` (group.R:269,345).
+
+        Parameters
+        ----------
+        ref : cairo.Pattern
+            The group pattern returned by :meth:`define_group`.
+        transform : ndarray or None
+            A 3x3 affine transformation matrix.  When ``None``, the
+            group is drawn as-is.
+        """
+        if ref is None:
+            return
+
+        ctx = self._ctx
+        ctx.save()
+
+        if transform is not None:
+            # Apply the 3x3 affine transform.
+            # R uses row-vector convention: point @ matrix
+            # Cairo uses column-vector: matrix * point
+            # So we need to transpose the matrix for Cairo.
+            import numpy as np
+            m = np.asarray(transform, dtype=float)
+            # Cairo Matrix(xx, yx, xy, yy, x0, y0) = column-major
+            # From row-vector convention: m[0,0]=xx, m[1,0]=yx, m[0,1]=xy,
+            # m[1,1]=yy, m[2,0]=x0, m[2,1]=y0
+            cairo_matrix = cairo.Matrix(
+                m[0, 0], m[1, 0],  # xx, yx
+                m[0, 1], m[1, 1],  # xy, yy
+                m[2, 0], m[2, 1],  # x0, y0
+            )
+            ctx.transform(cairo_matrix)
+
+        ctx.set_source(ref)
+        ctx.paint()
+        ctx.restore()

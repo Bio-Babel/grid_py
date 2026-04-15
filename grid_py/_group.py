@@ -240,20 +240,13 @@ class GroupGrob(GTree):
     def draw_details(self, recording: bool = True) -> None:
         """Draw the composited group.
 
-        Parameters
-        ----------
-        recording : bool
-            Whether the drawing should be recorded on the display list.
-
-        Notes
-        -----
-        Actual device-level compositing is delegated to the rendering
-        backend.  This method prepares the source / destination callables
-        and compositing operator and stores the group definition for
-        potential later reuse via :class:`UseGrob`.
+        Port of R ``drawDetails.GridGroup`` (group.R:261-270):
+        1. finaliseGroup(x) → source/destination closures
+        2. .defineGroup(src, op, dst) → ref
+        3. recordGroup(x, ref)
+        4. .useGroup(ref, NULL)
         """
-        # Placeholder: actual rendering requires a device backend.
-        pass
+        _draw_group_grob(self, use_immediately=True)
 
     # -- repr --------------------------------------------------------------
 
@@ -360,18 +353,13 @@ class DefineGrob(GTree):
     def draw_details(self, recording: bool = True) -> None:
         """Define the group without drawing.
 
-        Parameters
-        ----------
-        recording : bool
-            Whether the definition should be recorded on the display list.
-
-        Notes
-        -----
-        The group is registered so that a subsequent :class:`UseGrob` can
-        reference it by name.  No visible output is produced.
+        Port of R ``drawDetails.GridDefine`` (group.R:300-304):
+        1. finaliseGroup(x) → source/destination closures
+        2. .defineGroup(src, op, dst) → ref
+        3. recordGroup(x, ref) — store for later UseGrob
+        No visible output is produced.
         """
-        # Placeholder: actual device-level definition requires a backend.
-        pass
+        _draw_group_grob(self, use_immediately=False)
 
     # -- repr --------------------------------------------------------------
 
@@ -465,19 +453,45 @@ class UseGrob(Grob):
     def draw_details(self, recording: bool = True) -> None:
         """Draw the referenced group with the optional transform.
 
-        Parameters
-        ----------
-        recording : bool
-            Whether the drawing should be recorded on the display list.
-
-        Notes
-        -----
-        Looks up the group registered under :attr:`group` and renders it,
-        applying :attr:`transform` if provided.  Issues a warning if the
-        group has not been defined.
+        Port of R ``drawDetails.GridUse`` (group.R:330-347):
+        1. lookupGroup(x$group) → group metadata
+        2. Compute transform via x$transform(group, device=TRUE)
+        3. Validate 3x3 affine matrix
+        4. .useGroup(group$ref, transform)
         """
-        # Placeholder: actual device-level use requires a backend.
-        pass
+        from ._state import get_state
+
+        state = get_state()
+        group_data = state.lookup_group(self.group)
+
+        if group_data is None:
+            warnings.warn(f"Unknown group: {self.group}")
+            return
+
+        ref = group_data.get("ref")
+        if ref is None:
+            warnings.warn(f"Group '{self.group}' has no ref")
+            return
+
+        # Compute transform (R group.R:335)
+        transform = self.transform
+        if callable(transform):
+            # R passes a function: x$transform(group, device=TRUE)
+            transform = transform(group_data, device=True)
+
+        # Validate transform (R group.R:336-344)
+        if transform is not None:
+            m = np.asarray(transform, dtype=float)
+            if m.shape != (3, 3):
+                warnings.warn("Invalid transform (nothing drawn)")
+                return
+            if m[0, 2] != 0 or m[1, 2] != 0 or m[2, 2] != 1:
+                warnings.warn("Invalid transform (nothing drawn)")
+                return
+
+        renderer = state.get_renderer()
+        if renderer is not None and hasattr(renderer, "use_group"):
+            renderer.use_group(ref, transform)
 
     # -- repr --------------------------------------------------------------
 
@@ -486,6 +500,80 @@ class UseGrob(Grob):
             f"UseGrob[{self.name}](group={self.group!r}, "
             f"transform={'set' if self.transform is not None else 'None'})"
         )
+
+
+# ============================================================================
+# Internal: shared group drawing logic
+# ============================================================================
+
+
+def _draw_group_grob(grob: Union[GroupGrob, DefineGrob],
+                     use_immediately: bool) -> None:
+    """Shared logic for GroupGrob.draw_details and DefineGrob.draw_details.
+
+    Port of R's ``drawDetails.GridGroup`` (group.R:261-270) and
+    ``drawDetails.GridDefine`` (group.R:300-304).
+
+    1. Build source/destination draw closures (``finaliseGroup``, group.R:9-58)
+    2. Call renderer.define_group(src, op, dst) → ref
+    3. Record group in state for later UseGrob access
+    4. If *use_immediately*, call renderer.use_group(ref, None)
+    """
+    from ._state import get_state
+    from ._draw import grid_draw
+
+    state = get_state()
+    renderer = state.get_renderer()
+
+    if renderer is None:
+        return
+
+    src_grob = getattr(grob, "src", None)
+    dst_grob = getattr(grob, "dst", None)
+    op = getattr(grob, "op", "over")
+
+    # Build source closure (R group.R:10-38)
+    # R pushes a viewport with mask="none" to ensure clean group context.
+    # We simply draw the source grob.
+    def source_fn():
+        if src_grob is not None:
+            grid_draw(src_grob, recording=False)
+
+    # Build destination closure (R group.R:40-56)
+    dst_fn = None
+    if dst_grob is not None:
+        def dst_fn():
+            grid_draw(dst_grob, recording=False)
+
+    # Define group on renderer (R group.R:263/302)
+    ref = renderer.define_group(source_fn, op, dst_fn)
+
+    # Record group for later UseGrob access (R group.R:265/303)
+    # Port of recordGroup (group.R:65-104)
+    from ._units import convert_x, convert_y, Unit
+    group_data = {
+        "ref": ref,
+        "name": grob.name,
+    }
+    # Store viewport location/size for viewportTransform
+    try:
+        vtr = renderer._vp_transform_stack[-1]
+        group_data["wh"] = (vtr.width_cm / 2.54, vtr.height_cm / 2.54)
+        group_data["r"] = vtr.rotation_angle
+        group_data["transform"] = vtr.transform.copy()
+    except Exception:
+        group_data["wh"] = (1.0, 1.0)
+        group_data["r"] = 0.0
+
+    state.record_group(grob.name, group_data)
+
+    if ref is None:
+        warnings.warn("Group definition failed")
+        return
+
+    # Use immediately for GroupGrob (R group.R:269)
+    if use_immediately:
+        renderer.use_group(ref, None)
 
 
 # ============================================================================
