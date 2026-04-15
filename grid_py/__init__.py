@@ -190,8 +190,7 @@ grid_convert_x = convert_x
 grid_convert_y = convert_y
 grid_convert_width = convert_width
 grid_convert_height = convert_height
-device_loc = current_transform
-device_dim = current_transform
+from grid_py._units import device_loc, device_dim
 
 # R names grid.collection and grid.copy were undocumented stubs
 grid_collection = grid_draw

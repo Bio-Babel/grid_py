@@ -172,11 +172,11 @@ def _array_to_data_uri(image: Any) -> str:
             img_array = img_array.astype(np.uint8)
 
     if img_array.ndim == 2:
-        pil_img = PILImage.fromarray(img_array, mode="L")
+        pil_img = PILImage.fromarray(img_array)
     elif img_array.shape[2] == 3:
-        pil_img = PILImage.fromarray(img_array, mode="RGB")
+        pil_img = PILImage.fromarray(img_array)
     else:
-        pil_img = PILImage.fromarray(img_array, mode="RGBA")
+        pil_img = PILImage.fromarray(img_array)
 
     buf = io.BytesIO()
     pil_img.save(buf, format="PNG")
