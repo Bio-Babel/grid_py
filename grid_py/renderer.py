@@ -401,7 +401,19 @@ class CairoRenderer(GridRenderer):
         if isinstance(fill, Pattern):
             return self._setup_pattern(fill, gp, bbox=bbox)
 
-        fill_val = fill[0] if isinstance(fill, (list, tuple)) else fill
+        # Distinguish RGBA colour tuples (r,g,b,a) from lists of colour values.
+        # An RGBA tuple has 3-4 numeric elements all in [0,1]; a colour list
+        # contains strings, None, or gradient/pattern objects.
+        if isinstance(fill, tuple) and len(fill) in (3, 4) and all(
+            isinstance(c, (int, float)) for c in fill
+        ):
+            # Direct RGBA/RGB tuple — treat as a single colour
+            fill_val = fill
+        elif isinstance(fill, (list, tuple)):
+            fill_val = fill[0]
+        else:
+            fill_val = fill
+
         # R semantics: fill=NA (None) means "no fill" → transparent
         if fill_val is None:
             return (0.0, 0.0, 0.0, 0.0)
