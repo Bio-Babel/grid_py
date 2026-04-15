@@ -355,36 +355,44 @@ def _calc_layout_sizes(
     reduced_h = parent_h_px
 
     # ---- Phase 1: allocate absolute units (layout.c:allocateKnownWidths) --
-    for i in range(ncol):
-        utype = widths._units[i] if i < len(widths._units) else "null"
+    # R resolves ALL non-null units to absolute device pixels in this phase.
+    # Compound units (sum/min/max), contextual units (lines/char/snpc),
+    # and string/grob metric units must be resolved via the renderer.
+    from ._state import get_state as _get_state
+    _renderer = _get_state().get_renderer()
+
+    def _resolve_unit_to_px(unit_obj, idx, axis, parent_px):
+        """Resolve a single unit element to device pixels."""
+        utype = unit_obj._units[idx] if idx < len(unit_obj._units) else "null"
+        val = float(unit_obj._values[idx])
         if utype == "null":
+            return None  # null → flex
+        if utype == "npc":
+            return val * parent_px
+        if utype in _INCHES_PER:
+            return val * _INCHES_PER[utype] * dpi
+        # Compound or contextual unit: resolve via renderer
+        if _renderer is not None:
+            from ._units import Unit
+            elem = Unit(val, utype,
+                        data=unit_obj._data[idx] if unit_obj._data else None)
+            inches = _renderer._resolve_to_inches(elem, axis, True)
+            return inches * dpi
+        return None  # no renderer → treat as null
+
+    for i in range(ncol):
+        px = _resolve_unit_to_px(widths, i, "x", parent_w_px)
+        if px is None:
             relative_w[i] = True
         else:
-            val = float(widths._values[i])
-            if utype == "npc":
-                px = val * parent_w_px
-            elif utype in _INCHES_PER:
-                px = val * _INCHES_PER[utype] * dpi
-            else:
-                # Unknown type: treat as null
-                relative_w[i] = True
-                continue
             col_sizes[i] = px
             reduced_w -= px
 
     for j in range(nrow):
-        utype = heights._units[j] if j < len(heights._units) else "null"
-        if utype == "null":
+        px = _resolve_unit_to_px(heights, j, "y", parent_h_px)
+        if px is None:
             relative_h[j] = True
         else:
-            val = float(heights._values[j])
-            if utype == "npc":
-                px = val * parent_h_px
-            elif utype in _INCHES_PER:
-                px = val * _INCHES_PER[utype] * dpi
-            else:
-                relative_h[j] = True
-                continue
             row_sizes[j] = px
             reduced_h -= px
 

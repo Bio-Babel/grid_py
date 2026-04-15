@@ -401,10 +401,10 @@ class GridRenderer(ABC):
             nrow = getattr(layout, "nrow", 1)
             ncol = getattr(layout, "ncol", 1)
             col_widths = self._resolve_sizes(
-                getattr(layout, "widths", None), ncol, parent_w,
+                getattr(layout, "widths", None), ncol, parent_w, axis="x",
             )
             row_heights = self._resolve_sizes(
-                getattr(layout, "heights", None), nrow, parent_h,
+                getattr(layout, "heights", None), nrow, parent_h, axis="y",
             )
 
         ncol = len(col_widths)
@@ -417,7 +417,8 @@ class GridRenderer(ABC):
             "row_starts": row_starts, "row_heights": row_heights,
         }
 
-    def _resolve_sizes(self, unit_obj: Any, n: int, total: float) -> list:
+    def _resolve_sizes(self, unit_obj: Any, n: int, total: float,
+                        axis: str = "x") -> list:
         """Resolve a Unit vector to device sizes, distributing null units."""
         if unit_obj is None:
             return [total / n] * n
@@ -448,7 +449,19 @@ class GridRenderer(ABC):
                 abs_total += px
             elif t == "null":
                 null_total += float(v)
+            elif t in ("sum", "min", "max", "lines", "char", "snpc",
+                        "strwidth", "strheight", "strascent", "strdescent",
+                        "grobwidth", "grobheight"):
+                # Context-dependent or compound units: resolve to inches
+                # via the full pipeline, then convert to device pixels.
+                elem = Unit(float(v), t,
+                            data=unit_obj._data[i] if unit_obj._data else None)
+                inches = self._resolve_to_inches(elem, axis, True)
+                px = inches * self._dev_units_per_inch
+                abs_sizes[i] = px
+                abs_total += px
             else:
+                # Unknown type — treat as null
                 null_total += float(v)
 
         remaining = max(total - abs_total, 0.0)
