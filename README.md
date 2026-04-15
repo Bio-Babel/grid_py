@@ -339,6 +339,76 @@ html = r.to_html()          # export interactive HTML
 
 `grid_newpage()` creates a `CairoRenderer` by default when no renderer is bound.
 
+## Interactive Web Visualization
+
+`WebRenderer` turns any grid plot into an interactive HTML document.  The same
+layout code that produces a static PNG via `CairoRenderer` can produce a
+zoomable, pannable, tooltip-enabled web page — with zero API changes.
+
+### How it works
+
+```
+Python (grid_py)                          Browser (gridpy.js)
+┌──────────────┐                         ┌──────────────────────┐
+│ grid_draw()  │──→ Scene Graph JSON ──→ │ SVG layer (text,     │
+│ viewports,   │    {root, defs, dpi}    │   shapes, clip/mask) │
+│ grobs, gpar  │                         │ Canvas layer (>2000  │
+│              │                         │   points batch)      │
+│ .metadata    │──→ node.data[] ───────→ │ Quadtree spatial     │
+│ (per-point)  │                         │   index → tooltips   │
+└──────────────┘                         └──────────────────────┘
+```
+
+1. Python builds a JSON scene graph during `grid_draw()` calls
+2. `gridpy.js` renders SVG for shapes/text, Canvas for large point clouds
+3. All data-carrying points register in a spatial index (quadtree)
+4. Hover triggers a proximity query — no DOM hit-testing needed
+
+### Tooltip data
+
+Attach a `metadata` dict to any grob before drawing.  Keys become tooltip
+labels; list values are indexed per point:
+
+```python
+grob = points_grob(x=x_data, y=y_data, pch=19,
+                   gp=Gpar(col=colors, fill=colors))
+grob.metadata = {
+    "species": species_list,          # per-point label
+    "value":   [f"{v:.1f}" for v in values],
+}
+grid_draw(grob)                       # metadata flows into the scene graph
+```
+
+### Output modes
+
+```python
+r = WebRenderer(width=7, height=5, dpi=100)
+get_state().init_device(r)
+# ... draw with grid_draw() ...
+
+# Jupyter notebook — inline display with D3 inlined (no CDN dependency)
+display(r)                            # uses _repr_html_() → <iframe srcdoc>
+
+# Standalone HTML — lightweight, loads D3 from CDN
+r.save("plot.html")                   # open in any browser
+
+# Raw scene graph — for custom frontends (Vue, React, etc.)
+json_str = r.to_scene_json()          # framework calls gridpy.render(el, json)
+```
+
+### Rendering layers
+
+The browser runtime uses a layered architecture for performance:
+
+| Layer | z-index | Content | When used |
+|-------|---------|---------|-----------|
+| Canvas | 1 | Batch-drawn points | Point count > 2000 |
+| SVG | 2 | Text, shapes, small point sets | Default for most grobs |
+| Overlay | 3 | D3 zoom/brush handlers | When `interactive: true` |
+
+Routing is automatic (`render_hint="auto"`), or you can force a layer per grob
+with `render_hint="svg"` or `render_hint="canvas"`.
+
 ## Documentation
 
 ```bash
