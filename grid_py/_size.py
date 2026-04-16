@@ -127,6 +127,14 @@ def calc_string_metric(
     Uses Cairo's FreeType-backed font engine to measure the given *text*
     string with the font described by *gp*.
 
+    Returns **text-specific** ascent and descent (like R's ``GEStrMetric``),
+    not font-level values.  For example, ``"H"`` has descent ≈ 0 because
+    it has no descender strokes, while ``"g"`` has a positive descent.
+
+    To avoid integer-quantisation artifacts from Cairo's toy font API at
+    small point sizes, measurements are taken at a scaled-up font size
+    and normalised back.
+
     Parameters
     ----------
     text : str
@@ -148,17 +156,33 @@ def calc_string_metric(
     ['ascent', 'descent', 'width']
     """
     ctx = _get_measure_ctx()
-    _apply_font_from_gpar(ctx, gp)
+    fontsize = _apply_font_from_gpar(ctx, gp)
 
-    # font_extents: (ascent, descent, height, max_x_advance, max_y_advance)
-    fe = ctx.font_extents()
+    # --- Scaled measurement to defeat integer quantisation -------
+    # Cairo's toy font API quantises font_extents and text_extents
+    # to integer user-units.  At small point sizes (e.g. 8.8 pt)
+    # this introduces large relative errors.  By measuring at
+    # SCALE× the requested size and dividing back, we recover
+    # sub-pixel precision.
+    _SCALE = 100
+    ctx.set_font_size(fontsize * _SCALE)
+
     # text_extents: (x_bearing, y_bearing, width, height, x_advance, y_advance)
     te = ctx.text_extents(text)
 
     pts_per_inch = 72.0
-    ascent = fe[0] / pts_per_inch
-    descent = fe[1] / pts_per_inch
-    width = te[4] / pts_per_inch  # x_advance
+
+    # Text-specific ascent and descent from text_extents
+    # (matches R's GEStrMetric which returns per-string metrics):
+    #   ascent  = -y_bearing  (baseline to top of ink)
+    #   descent = height + y_bearing  (baseline to bottom of ink; ≥0)
+    #   width   = x_advance  (total advance width)
+    ascent = (-te[1]) / _SCALE / pts_per_inch
+    descent = max(0.0, (te[3] + te[1])) / _SCALE / pts_per_inch
+    width = te[4] / _SCALE / pts_per_inch
+
+    # Restore the original font size on the shared context.
+    ctx.set_font_size(fontsize)
 
     return {"ascent": ascent, "descent": descent, "width": width}
 

@@ -1346,12 +1346,43 @@ def string_descent(string: Union[str, Sequence[str]]) -> Unit:
 # ===================================================================
 
 
-def absolute_size(x: Unit) -> Unit:
-    """Mark a ``Unit`` as absolute.
+def _is_absolute_unit_type(utype: str) -> bool:
+    """Check whether a unit type is "absolute" in R's sense.
 
-    For units that are already absolute this is a no-op.  For
-    context-dependent units, only the absolute components are retained
-    (non-absolute components are set to zero).
+    R's ``isAbsolute()`` (grid.h:218) treats these as absolute:
+    cm, inches, mm, points, lines, null, char, strwidth, strheight,
+    strascent, strdescent, and all ``my*`` variants (>1000).
+
+    NON-absolute (context-dependent on parent size): npc, native, snpc.
+    Also non-absolute: grobwidth, grobheight, grobx, groby, grobascent,
+    grobdescent (depend on grob measurement in context).
+
+    Note: ``"null"`` IS absolute (it's resolved by GridLayout, not parent size).
+    Note: ``"lines"`` IS absolute (depends on fontsize only, not parent size).
+    """
+    _NON_ABSOLUTE = frozenset({
+        "npc", "native", "snpc",
+        "grobwidth", "grobheight", "grobx", "groby",
+        "grobascent", "grobdescent",
+        # Compound types need recursion — not absolute in isolation.
+        "sum", "min", "max",
+    })
+    return utype not in _NON_ABSOLUTE
+
+
+def absolute_size(x: Unit) -> Unit:
+    """Convert a Unit to its absolute form.
+
+    Absolute units (cm, inches, lines, null, points, etc.) pass through
+    unchanged.  Non-absolute units (npc, native, snpc, grobwidth, etc.)
+    are replaced with ``unit(1, "null")``.
+
+    For compound (sum/min/max) units, the function recurses into the
+    operands, preserving absolute leaves and replacing non-absolute
+    leaves with null.
+
+    This matches R's ``absolute.size()`` / ``absolute.units()``
+    (grid/R/size.R:130, grid/src/unit.c:1777-1831).
 
     Parameters
     ----------
@@ -1361,19 +1392,37 @@ def absolute_size(x: Unit) -> Unit:
     Returns
     -------
     Unit
-        A copy of *x* with non-absolute elements zeroed out.
+        A copy of *x* with non-absolute elements replaced by ``null``.
 
     Examples
     --------
     >>> absolute_size(Unit(2, "cm"))
     Unit([2.0], ['cm'])
+    >>> absolute_size(Unit(0.5, "npc"))
+    Unit([1.0], ['null'])
     """
     if not isinstance(x, Unit):
         raise TypeError("x must be a Unit")
+
+    n = len(x)
+
+    # Fast path: all absolute → return as-is (R: line 1803)
+    if all(_is_absolute_unit_type(x._units[i]) for i in range(n)):
+        return x
+
     new = x.copy()
-    for i in range(len(new)):
-        if new._units[i] not in _ABSOLUTE_UNIT_TYPES:
-            new._values[i] = 0.0
+    for i in range(n):
+        utype = new._units[i]
+        if utype in ("sum", "min", "max"):
+            # Arithmetic compound: recurse into operands (R: lines 1814-1818)
+            data = new._data[i]
+            if data is not None and isinstance(data, Unit):
+                new._data[i] = absolute_size(data)
+        elif not _is_absolute_unit_type(utype):
+            # Non-absolute scalar: replace with unit(1, "null") (R: lines 1819-1820)
+            new._values[i] = 1.0
+            new._units[i] = "null"
+            new._data[i] = None
     return new
 
 

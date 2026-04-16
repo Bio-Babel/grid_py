@@ -90,17 +90,31 @@ def _resolve_just(grob: Any) -> Tuple[float, float]:
 
 
 def _subset_gpar(gp: Optional[Gpar], i: int) -> Optional[Gpar]:
-    """Return a Gpar containing only the *i*-th element of each vectorised param."""
+    """Return a Gpar containing only the *i*-th element of each vectorised param.
+
+    R ``NA`` semantics: when a vectorised colour/fill contains ``NA``
+    entries, the corresponding rect/line/text must render with no
+    stroke/fill — not fall back to the ``get.gpar()`` default.  Python
+    represents ``NA`` as ``None`` in a sequence.  Since
+    :class:`Gpar` drops ``None`` *scalars* at construction (matching
+    R's ``NULL`` semantics = "inherit"), we preserve the NA intent
+    here by emitting the string ``"transparent"`` for colour-typed
+    fields, which the renderer parses as a zero-alpha colour.
+    """
     if gp is None:
         return None
     new_params: Dict[str, Any] = {}
     for key, val in gp.params.items():
         if isinstance(val, np.ndarray) and val.ndim >= 1 and len(val) > 1:
-            new_params[key] = val[i % len(val)]
+            picked = val[i % len(val)]
         elif isinstance(val, (list, tuple)) and len(val) > 1:
-            new_params[key] = val[i % len(val)]
+            picked = val[i % len(val)]
         else:
-            new_params[key] = val
+            picked = val
+
+        if picked is None and key in ("col", "fill") and val is not picked:
+            picked = "transparent"
+        new_params[key] = picked
     return Gpar(**new_params)
 
 
@@ -236,6 +250,14 @@ def _render_grob(
         x = renderer.resolve_x_array(getattr(grob, "x", [0.0, 1.0]), gp=gp)
         y = renderer.resolve_y_array(getattr(grob, "y", [0.0, 1.0]), gp=gp)
         id_ = getattr(grob, "id", None)
+        id_lengths = getattr(grob, "id_lengths", None)
+        # R polylineGrob supports either `id` (per-point group) or
+        # `id.lengths` (run-length encoded).  If only lengths were
+        # given, expand them into a per-point id vector so the renderer
+        # correctly breaks sub-polylines.
+        if id_ is None and id_lengths is not None:
+            lengths = np.atleast_1d(np.asarray(id_lengths, dtype=int))
+            id_ = np.repeat(np.arange(1, len(lengths) + 1), lengths)
         if id_ is not None:
             id_ = np.atleast_1d(np.asarray(id_, dtype=int))
         renderer.draw_polyline(x, y, id_=id_, gp=gp)

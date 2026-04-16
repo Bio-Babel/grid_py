@@ -525,10 +525,13 @@ class TestAbsoluteSize:
         result = absolute_size(u)
         assert float(result.values[0]) == 2.0
 
-    def test_non_absolute_zeroed(self):
+    def test_non_absolute_replaced_with_null(self):
+        # R: non-absolute units are replaced with unit(1, "null"),
+        # not zeroed (grid/src/unit.c:1819-1820).
         u = Unit(2, "npc")
         result = absolute_size(u)
-        assert float(result.values[0]) == 0.0
+        assert float(result.values[0]) == 1.0
+        assert result._units[0] == "null"
 
     def test_non_unit_raises(self):
         with pytest.raises(TypeError, match="must be a Unit"):

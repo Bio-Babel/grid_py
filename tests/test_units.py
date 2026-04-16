@@ -555,16 +555,20 @@ class TestAbsoluteSize:
         result = absolute_size(u)
         assert result.values[0] == pytest.approx(2.0)
 
-    def test_context_unit_zeroed(self):
+    def test_context_unit_replaced_with_null(self):
+        # R: non-absolute → unit(1, "null"), not zeroed
         u = Unit(1, "npc")
         result = absolute_size(u)
-        assert result.values[0] == pytest.approx(0.0)
+        assert result.values[0] == pytest.approx(1.0)
+        assert result._units[0] == "null"
 
     def test_mixed_units(self):
         u = Unit([3, 1], ["cm", "npc"])
         result = absolute_size(u)
         assert result.values[0] == pytest.approx(3.0)
-        assert result.values[1] == pytest.approx(0.0)
+        assert result._units[0] == "cm"
+        assert result.values[1] == pytest.approx(1.0)
+        assert result._units[1] == "null"
 
     def test_non_unit_raises(self):
         with pytest.raises(TypeError):

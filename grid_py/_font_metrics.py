@@ -92,17 +92,27 @@ class CairoFontMetrics(FontMetricsBackend):
                 slant = cairo.FONT_SLANT_ITALIC
 
         ctx.select_font_face(family or "sans-serif", slant, weight)
-        ctx.set_font_size(fontsize * cex)
 
-        fe = ctx.font_extents()
+        # Scaled measurement to defeat Cairo toy-font integer quantisation.
+        _SCALE = 100
+        actual_size = fontsize * cex
+        ctx.set_font_size(actual_size * _SCALE)
+
         te = ctx.text_extents(text)
 
-        # te = (x_bearing, y_bearing, width, height, x_advance, y_advance)
-        # R's GEStrWidth returns advance width (te[4]), not ink bbox (te[2]).
+        # Text-specific ascent/descent from text_extents (matches R's
+        # GEStrMetric which returns per-string metrics).
+        ascent = (-te[1]) / _SCALE / 72.0
+        descent = max(0.0, (te[3] + te[1])) / _SCALE / 72.0
+        width = te[4] / _SCALE / 72.0
+
+        # Restore original size on the shared context.
+        ctx.set_font_size(actual_size)
+
         return {
-            "ascent": fe[0] / 72.0,
-            "descent": fe[1] / 72.0,
-            "width": te[4] / 72.0,
+            "ascent": ascent,
+            "descent": descent,
+            "width": width,
         }
 
 

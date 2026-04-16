@@ -322,12 +322,22 @@ class CairoRenderer(GridRenderer):
             return (0.0, 0.0, 0.0, 1.0)
 
         col = gp.get("col", None)
-        col_val = col[0] if isinstance(col, (list, tuple)) else col
-        # R semantics: col=NA means "no border" → transparent.
-        # But col=None (unset) should fall back to the default black,
-        # matching R's get.gpar()$col default of "black".
-        if col_val is None:
-            col_val = "black"
+        # R semantics:
+        #   * col=NULL (unset)      → inherit parent, default "black"
+        #   * col=NA (explicit)     → no stroke (transparent)
+        # In Python Gpar, None-scalar is dropped at construction, so
+        # ``gp.get("col") is None`` ≡ NULL.  A sequence whose entries
+        # are None (coming from ggplot2 ``colour=NA`` data) must be
+        # treated as NA, matching R's ``gpar(col=NA)``.
+        _is_seq = hasattr(col, "__len__") and not isinstance(col, str)
+        if _is_seq:
+            col_val = col[0]
+            if col_val is None:
+                return (0.0, 0.0, 0.0, 0.0)  # NA — skip stroke
+        else:
+            col_val = col
+            if col_val is None:
+                col_val = "black"            # NULL — default
         rgba = _parse_colour(col_val)
 
         alpha = gp.get("alpha", None)
