@@ -185,16 +185,40 @@ def _normalise_labels(grob: Any) -> list:
 
 # -- text grob (R: primitives.R:1430-1470) ---------------------------------
 
+def _resolve_grob_gp(grob: Any) -> "Optional[Gpar]":
+    """Resolve a grob's gpar by merging with the current viewport stack.
+
+    Port of R's ``resolveGPar`` — the grob's own gp overrides inherited
+    values from the viewport gpar stack, matching R's ``C_textBounds``
+    which always uses the fully-resolved gpar.
+    """
+    grob_gp = getattr(grob, "gp", None)
+    try:
+        from ._gpar import get_gpar
+        vp_gp = get_gpar()
+    except Exception:
+        return grob_gp
+    if grob_gp is None:
+        return vp_gp
+    if vp_gp is None:
+        return grob_gp
+    return grob_gp._merge(vp_gp)
+
+
 def _text_bbox(grob: Any) -> tuple:
     """Compute (width, height) of the text bounding box in inches.
 
     Port of R ``C_textBounds``: measures text extents and applies
     rotation to compute the axis-aligned bounding box.  This is what
     R's ``widthDetails.text`` and ``heightDetails.text`` use internally.
+
+    The grob's gp is merged with the current viewport stack gpar,
+    matching R's behavior where grobWidth() inherits fontsize etc.
+    from the viewport context.
     """
     import math
     labels = _normalise_labels(grob)
-    gp = getattr(grob, "gp", None)
+    gp = _resolve_grob_gp(grob)
     rot = float(getattr(grob, "rot", 0.0))
 
     if not labels:
@@ -268,7 +292,7 @@ def _text_ascent_details(grob: Any) -> Unit:
     Mirrors ``ascentDetails.text`` (R ``primitives.R:1454``).
     """
     labels = _normalise_labels(grob)
-    gp = getattr(grob, "gp", None)
+    gp = _resolve_grob_gp(grob)
     if len(labels) == 1:
         m = calc_string_metric(labels[0], gp=gp)
         return Unit(m["ascent"], "inches")
@@ -284,7 +308,7 @@ def _text_descent_details(grob: Any) -> Unit:
     Mirrors ``descentDetails.text`` (R ``primitives.R:1463``).
     """
     labels = _normalise_labels(grob)
-    gp = getattr(grob, "gp", None)
+    gp = _resolve_grob_gp(grob)
     if len(labels) == 1:
         m = calc_string_metric(labels[0], gp=gp)
         return Unit(m["descent"], "inches")
