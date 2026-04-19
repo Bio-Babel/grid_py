@@ -232,21 +232,24 @@ def grid_pretty(range_val: Sequence[float], n: int = 5) -> np.ndarray:
     if lo == hi:
         return np.array([lo])
 
-    # ---- R's pretty algorithm (simplified) --------------------------------
-    # Reference: Wilkinson, "The Grammar of Graphics"; also R source
-    # prettybase.c
+    # ---- Port of R's pretty (src/appl/pretty.c R_pretty) ------------------
+    # R's grid.pretty(range, n) is `pretty(range, n)` filtered to within
+    # range; we follow the same two-step recipe.
     diff = hi - lo
-    # cell = max of range-size / n and |lo|, |hi| as "unit size"
     cell = max(abs(diff) / max(n, 1), 1e-10)
 
-    # "base" is the magnitude
     base = 10.0 ** math.floor(math.log10(cell))
-    # Select among {1, 2, 5, 10} * base
+    # Pick unit from {1, 2, 5, 10} * base via R's bias-weighted comparison
+    # (high.u.bias = h = 1.5, u5.bias = h5 = 0.5 + 1.5*h = 2.75).
+    h = 1.5
+    h5 = 0.5 + 1.5 * h
     unit = base
-    for u in (1, 2, 5, 10):
-        if cell <= u * base + 1e-7 * base:
-            unit = u * base
-            break
+    if 2.0 * base - cell < h * (cell - unit):
+        unit = 2.0 * base
+    if 5.0 * base - cell < h5 * (cell - unit):
+        unit = 5.0 * base
+    if 10.0 * base - cell < h * (cell - unit):
+        unit = 10.0 * base
 
     ns = math.floor(lo / unit + 1e-7)
     nu = math.ceil(hi / unit - 1e-7)
@@ -255,9 +258,12 @@ def grid_pretty(range_val: Sequence[float], n: int = 5) -> np.ndarray:
     hi_tick = nu * unit
 
     ticks = np.arange(lo_tick, hi_tick + unit * 0.5, unit)
-
     # Clip floating-point noise at the boundaries
     ticks = np.round(ticks / unit) * unit
+
+    # grid.pretty restricts to within the requested range
+    # (grid R-3.6 src/library/grid/R/util.R: `res[res >= range[1] & res <= range[2]]`).
+    ticks = ticks[(ticks >= lo) & (ticks <= hi)]
 
     return ticks
 
