@@ -239,10 +239,13 @@ def grid_pretty(range_val: Sequence[float], n: int = 5) -> np.ndarray:
     cell = max(abs(diff) / max(n, 1), 1e-10)
 
     base = 10.0 ** math.floor(math.log10(cell))
-    # Pick unit from {1, 2, 5, 10} * base via R's bias-weighted comparison
-    # (high.u.bias = h = 1.5, u5.bias = h5 = 0.5 + 1.5*h = 2.75).
-    h = 1.5
-    h5 = 0.5 + 1.5 * h
+    # GEPretty (R src/main/engine.c) calls R_pretty0 with the
+    # `high_u_fact = {0.8, 1.7}` bias, NOT R's user-facing pretty()
+    # default of {1.5, 2.75}.  The smaller bias prefers denser ticks,
+    # which is why grid.pretty(c(-7.49, 7.49)) returns step=2 (giving
+    # 7 ticks) while pretty(c(-7.49, 7.49)) returns step=5 (5 ticks).
+    h = 0.8
+    h5 = 1.7
     unit = base
     if 2.0 * base - cell < h * (cell - unit):
         unit = 2.0 * base
