@@ -237,22 +237,53 @@ class TestCalcXsplinePoints:
         np.testing.assert_array_equal(ry, y)
 
     def test_two_points(self):
+        # Default shape=0 (sharp corners) with 2 CPs: Blanc-Schlick degenerates
+        # to a straight line through the control points, yielding exactly the
+        # 2 endpoints (matches R's ``xsplinePoints``).
         x = np.array([0.0, 1.0])
         y = np.array([0.0, 1.0])
         rx, ry = _calc_xspline_points(x, y)
-        assert len(rx) > 2
+        assert len(rx) == 2
+        np.testing.assert_allclose(rx, x)
+        np.testing.assert_allclose(ry, y)
+
+    def test_two_points_with_shape(self):
+        # With shape=0.5 both CPs duplicated, still returns 2 points (degenerate
+        # segment — matches R's GEXspline).
+        x = np.array([0.0, 1.0])
+        y = np.array([0.0, 1.0])
+        rx, ry = _calc_xspline_points(x, y, shape=0.5)
+        assert len(rx) == 2
 
     def test_closed(self):
+        # Closed 3-point spline with shape=0: Blanc-Schlick outputs 3
+        # polygon vertices (matches R).
         x = np.array([0.0, 1.0, 0.5])
         y = np.array([0.0, 0.0, 1.0])
         rx, ry = _calc_xspline_points(x, y, open_=False)
+        assert len(rx) == 3
+
+    def test_closed_with_shape(self):
+        # Closed 3-point spline with shape=0.5 interpolates; expect more
+        # than 3 output points.
+        x = np.array([0.0, 1.0, 0.5])
+        y = np.array([0.0, 0.0, 1.0])
+        rx, ry = _calc_xspline_points(x, y, shape=0.5, open_=False)
         assert len(rx) > 3
 
-    def test_no_rep_ends(self):
+    def test_no_rep_ends_requires_four_cps(self):
+        # Matches R's error: "there must be at least four control points".
         x = np.array([0.0, 0.5, 1.0])
         y = np.array([0.0, 1.0, 0.0])
-        rx, ry = _calc_xspline_points(x, y, repEnds=False)
-        assert len(rx) > 2
+        with pytest.raises(ValueError, match="four control points"):
+            _calc_xspline_points(x, y, repEnds=False)
+
+    def test_no_rep_ends_with_four_cps(self):
+        # repEnds=False with 4 CPs interpolates without endpoint replication.
+        x = np.array([0.0, 0.33, 0.67, 1.0])
+        y = np.array([0.0, 1.0, 1.0, 0.0])
+        rx, ry = _calc_xspline_points(x, y, shape=0.5, repEnds=False)
+        assert len(rx) >= 2
 
 
 # ---------------------------------------------------------------------------
@@ -395,10 +426,18 @@ class TestGridXspline:
 class TestXsplinePoints:
 
     def test_basic(self):
+        # Default shape=0 returns the CPs directly (Blanc-Schlick: corners).
         g = xspline_grob(x=[0, 0.5, 1], y=[0, 1, 0])
         pts = xspline_points(g)
         assert "x" in pts
         assert "y" in pts
+        # shape=0 ⇒ exactly the 3 control points
+        assert len(pts["x"]) == 3
+
+    def test_interpolating_shape(self):
+        # shape=0.5 (interpolating) produces more sampled points.
+        g = xspline_grob(x=[0, 0.5, 1], y=[0, 1, 0], shape=0.5)
+        pts = xspline_points(g)
         assert len(pts["x"]) > 3
 
     def test_invalid_grob_raises(self):

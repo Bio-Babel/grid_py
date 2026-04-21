@@ -556,40 +556,32 @@ def _calc_xspline_points(
 ) -> Tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Evaluate an X-spline through the given control points.
 
-    .. note:: **Approximate implementation.**
+    Faithful port of R's ``src/main/xspline.c`` (itself derived from
+    XFig 3.2.4, which in turn implements the Blanc & Schlick 1995
+    X-spline model verbatim).  The per-point ``shape`` parameter is in
+    ``[-1, 1]`` with the standard interpretation:
 
-       The *shape* parameter controls the blending per control point:
+    - ``shape < 0``: "approximating" (B-spline-like)
+    - ``shape = 0``: control point is a sharp corner
+    - ``shape > 0``: "interpolating" (curve passes through)
 
-       - ``shape = -1``: B-spline-like approximation (does not pass through).
-       - ``shape =  0``: Catmull-Rom interpolation (exact).
-       - ``shape =  1``: Tight/linear interpolation (sharp corners).
-
-       At the three extremes (``-1``, ``0``, ``+1``) the output is correct.
-       For intermediate values the current implementation linearly blends
-       between Catmull-Rom / B-spline / linear bases, which is a reasonable
-       approximation but **not** the precise algebraic blending functions
-       defined in the Blanc & Schlick paper.
-
-    .. todo:: **Blanc & Schlick 1995 precise blending functions.**
-
-       Replace the linear-interpolation-of-bases approach with the exact
-       ``f_blend`` / ``g_blend`` / ``h_blend`` polynomial blending
-       functions from the original paper (and as implemented in R's
-       ``src/main/xspline.c``).  The current approximation diverges from
-       R's ``GEXspline()`` at intermediate shape values (e.g. shape=0.3).
+    Blending is done with the three polynomial kernels defined in the
+    Blanc-Schlick paper — ``f_blend`` (quintic), ``g_blend`` (quintic),
+    and ``h_blend`` (quartic).  These are **exact**, not a Catmull-Rom /
+    B-spline / linear approximation.
 
     Parameters
     ----------
     x, y : ndarray
-        Control-point coordinates.
+        Control-point coordinates (inches, device, or any linear unit).
     shape : float or ndarray
-        Per-control-point shape parameter(s) in [-1, 1].  Scalar is
+        Per-control-point shape parameter(s) in ``[-1, 1]``.  Scalar is
         broadcast to all points.
     open_ : bool
-        Whether the spline is open (True) or closed (False).
+        Open (True) or closed (False) spline.
     repEnds : bool
-        Whether to replicate the first and last control points (for open
-        splines) so the curve passes through the endpoints.
+        For open splines, replicate the first and last control points so
+        the curve passes through the endpoints.  Matches R's ``repEnds``.
 
     Returns
     -------
@@ -601,7 +593,7 @@ def _calc_xspline_points(
     Blanc, C. and Schlick, C. (1995).  X-splines: A spline model designed
     for the end-user.  *Proceedings of SIGGRAPH 95*, pp. 377-386.
 
-    R implementation: ``src/main/xspline.c`` (R core, not grid package).
+    R implementation: ``src/main/xspline.c``.
     """
     x = np.asarray(x, dtype=np.float64)
     y = np.asarray(y, dtype=np.float64)
@@ -610,118 +602,354 @@ def _calc_xspline_points(
     if n < 2:
         return x.copy(), y.copy()
 
-    # Broadcast shape to per-point array
     if np.isscalar(shape):
         s = np.full(n, float(shape), dtype=np.float64)
     else:
         s = np.asarray(shape, dtype=np.float64)
         if len(s) < n:
             s = np.resize(s, n)
-
-    # Clamp shape to [-1, 1]
     s = np.clip(s, -1.0, 1.0)
 
-    # Replicate endpoints for open splines (matches R's GEXspline repEnds)
-    if open_ and repEnds and n >= 2:
-        x = np.concatenate([[x[0]], x, [x[-1]]])
-        y = np.concatenate([[y[0]], y, [y[-1]]])
-        s = np.concatenate([[s[0]], s, [s[-1]]])
-        n = len(x)
+    # R forces the first and last control points' shape to 0 for OPEN
+    # xsplines (primitives.R:795-803 ``validDetails.xspline``).  This
+    # makes the curve pass exactly through the endpoints: at shape=0,
+    # ``positive_s1/s2_influence`` at ``t=0`` reduces to ``A1=1`` and
+    # all other weights 0, so the blend resolves to the (duplicated)
+    # first control point.  Without this, open splines with nonzero
+    # end shapes do not land on the endpoints.
+    if open_ and n >= 1:
+        s = s.copy()
+        s[0] = 0.0
+        s[-1] = 0.0
 
-    if not open_:
-        # Wrap around for closed splines
-        x = np.concatenate([x, x[:3]])
-        y = np.concatenate([y, y[:3]])
-        s = np.concatenate([s, s[:3]])
-        n = len(x)
+    # R's precision parameter (LOW_PRECISION=1.0 is the default for
+    # ``GEXspline``).  Step size is derived adaptively from segment
+    # geometry (see ``_xsp_step``).
+    precision = 1.0
 
-    # ---- Evaluate the spline using a 4-point sliding window ----
-    # TODO(Blanc & Schlick 1995): replace the linear blending below with
-    # the exact f_blend/g_blend/h_blend polynomials from R src/main/xspline.c.
-    # Current approach: Catmull-Rom base, linearly blended toward B-spline
-    # (shape<0) or linear (shape>0).  Exact at shape=-1, 0, +1; approximate
-    # at intermediate values.
+    if open_:
+        out_x, out_y = _xsp_compute_open(x, y, s, repEnds, precision)
+    else:
+        out_x, out_y = _xsp_compute_closed(x, y, s, precision)
 
-    n_seg = n - 3  # With replicated ends, we have n-3 valid segments
-    if n_seg < 1:
-        # Not enough points; fall back to linear
-        return x.copy(), y.copy()
+    return out_x, out_y
 
-    pts_per_seg = max(8, 200 // max(1, n_seg))
-    t_vals = np.linspace(0, 1, pts_per_seg, endpoint=False)
 
-    all_x: List[float] = []
-    all_y: List[float] = []
+# -- Blanc-Schlick polynomial blending kernels ------------------------------
+#
+# Direct port of ``f_blend`` / ``g_blend`` / ``h_blend`` in
+# R's ``src/main/xspline.c`` (lines 138-159).  ``Q(s) = -s``.
 
-    for seg in range(n_seg):
-        i0 = seg
-        i1 = seg + 1
-        i2 = seg + 2
-        i3 = seg + 3
-        if i3 >= n:
-            break
+def _xsp_f_blend(numerator: float, denominator: float) -> float:
+    # f(u) = u^3 * (10 - p + (2p - 15) u + (6 - p) u^2),   p = 2*denom^2
+    p = 2.0 * denominator * denominator
+    u = numerator / denominator
+    u2 = u * u
+    return u * u2 * (10.0 - p + (2.0 * p - 15.0) * u + (6.0 - p) * u2)
 
-        p0x, p0y = x[i0], y[i0]
-        p1x, p1y = x[i1], y[i1]
-        p2x, p2y = x[i2], y[i2]
-        p3x, p3y = x[i3], y[i3]
 
-        s1 = s[i1]  # shape at P_i (left of segment)
-        s2 = s[i2]  # shape at P_{i+1} (right of segment)
+def _xsp_g_blend(u: float, q: float) -> float:
+    # g(u) = u * (q + u * (2q + u * (8 - 12q + u * (14q - 11 + u * (4 - 5q)))))
+    return u * (q + u * (2.0 * q + u * (8.0 - 12.0 * q + u *
+                 (14.0 * q - 11.0 + u * (4.0 - 5.0 * q)))))
 
-        for t in t_vals:
-            t2 = t * t
-            t3 = t2 * t
 
-            # Base: Catmull-Rom coefficients
-            b0 = 0.5 * (-t3 + 2*t2 - t)
-            b1 = 0.5 * (3*t3 - 5*t2 + 2)
-            b2 = 0.5 * (-3*t3 + 4*t2 + t)
-            b3 = 0.5 * (t3 - t2)
+def _xsp_h_blend(u: float, q: float) -> float:
+    # h(u) = u * (q + u * (2q + u^2 * (-2q - u*q)))
+    u2 = u * u
+    return u * (q + u * (2.0 * q + u2 * (-2.0 * q - u * q)))
 
-            # Shape modification: blend toward B-spline (s<0) or sharp (s>0)
-            # Use the average of s1 and s2 for the segment blend
-            avg_s = (s1 + s2) * 0.5
 
-            if avg_s < 0:
-                # Blend toward B-spline (uniform cubic B-spline basis)
-                alpha = -avg_s  # 0 to 1
-                # B-spline basis functions
-                bb0 = (-t3 + 3*t2 - 3*t + 1) / 6.0
-                bb1 = (3*t3 - 6*t2 + 4) / 6.0
-                bb2 = (-3*t3 + 3*t2 + 3*t + 1) / 6.0
-                bb3 = t3 / 6.0
-                b0 = (1 - alpha) * b0 + alpha * bb0
-                b1 = (1 - alpha) * b1 + alpha * bb1
-                b2 = (1 - alpha) * b2 + alpha * bb2
-                b3 = (1 - alpha) * b3 + alpha * bb3
-            elif avg_s > 0:
-                # Blend toward sharp interpolation
-                # At s=1, the curve should pass through points with possible
-                # sharp corners. We blend Catmull-Rom toward linear interp.
-                alpha = avg_s  # 0 to 1
-                # Linear basis (sharp corners)
-                lb1 = 1 - t
-                lb2 = t
-                b0 = (1 - alpha) * b0
-                b1 = (1 - alpha) * b1 + alpha * lb1
-                b2 = (1 - alpha) * b2 + alpha * lb2
-                b3 = (1 - alpha) * b3
+# -- Influence functions ----------------------------------------------------
+#
+# Direct port of ``negative_s1_influence`` / ``negative_s2_influence`` /
+# ``positive_s1_influence`` / ``positive_s2_influence`` (xspline.c:161-197).
+# ``Q(s) = -s`` is applied for the negative-s branches.
 
-            bx = b0 * p0x + b1 * p1x + b2 * p2x + b3 * p3x
-            by = b0 * p0y + b1 * p1y + b2 * p2y + b3 * p3y
-            all_x.append(bx)
-            all_y.append(by)
+def _xsp_neg_s1(t: float, s1: float) -> Tuple[float, float]:
+    q = -s1
+    return _xsp_h_blend(-t, q), _xsp_g_blend(t, q)
 
-    # Append final point
-    if all_x:
-        all_x.append(float(x[-2] if open_ else x[0]))
-        all_y.append(float(y[-2] if open_ else y[0]))
 
-    if not all_x:
-        return x.copy(), y.copy()
+def _xsp_neg_s2(t: float, s2: float) -> Tuple[float, float]:
+    q = -s2
+    return _xsp_g_blend(1.0 - t, q), _xsp_h_blend(t - 1.0, q)
 
-    return np.array(all_x, dtype=np.float64), np.array(all_y, dtype=np.float64)
+
+def _xsp_pos_s1(k: float, t: float, s1: float) -> Tuple[float, float]:
+    Tk = k + 1.0 + s1
+    A0 = _xsp_f_blend(t + k + 1.0 - Tk, k - Tk) if (t + k + 1.0) < Tk else 0.0
+    Tk = k + 1.0 - s1
+    A2 = _xsp_f_blend(t + k + 1.0 - Tk, k + 2.0 - Tk)
+    return A0, A2
+
+
+def _xsp_pos_s2(k: float, t: float, s2: float) -> Tuple[float, float]:
+    Tk = k + 2.0 + s2
+    A1 = _xsp_f_blend(t + k + 1.0 - Tk, k + 1.0 - Tk)
+    Tk = k + 2.0 - s2
+    A3 = _xsp_f_blend(t + k + 1.0 - Tk, k + 3.0 - Tk) if (t + k + 1.0) > Tk else 0.0
+    return A1, A3
+
+
+def _xsp_weights(k: float, t: float, s1: float, s2: float
+                 ) -> Tuple[float, float, float, float]:
+    """Compute (A0, A1, A2, A3) blending weights for one ``(k, t, s1, s2)``."""
+    if s1 < 0.0:
+        A0, A2 = _xsp_neg_s1(t, s1)
+    else:
+        A0, A2 = _xsp_pos_s1(k, t, s1)
+    if s2 < 0.0:
+        A1, A3 = _xsp_neg_s2(t, s2)
+    else:
+        A1, A3 = _xsp_pos_s2(k, t, s2)
+    return A0, A1, A2, A3
+
+
+def _xsp_point(A: Tuple[float, float, float, float],
+               px: Tuple[float, float, float, float],
+               py: Tuple[float, float, float, float]
+               ) -> Tuple[float, float]:
+    """``point_computing`` / ``point_adding``: weighted blend normalised."""
+    ws = A[0] + A[1] + A[2] + A[3]
+    num_x = A[0] * px[0] + A[1] * px[1] + A[2] * px[2] + A[3] * px[3]
+    num_y = A[0] * py[0] + A[1] * py[1] + A[2] * py[2] + A[3] * py[3]
+    return num_x / ws, num_y / ws
+
+
+# -- Adaptive step computation (xspline.c:224-342) --------------------------
+
+_MAX_SPLINE_STEP = 0.2
+
+
+def _xsp_step(k: int, px: Tuple[float, ...], py: Tuple[float, ...],
+              s1: float, s2: float, precision: float) -> float:
+    """Port of R's ``step_computing`` — adaptive step based on curve extent.
+
+    The step is chosen so the polyline sampling resolution matches the
+    physical distance from segment origin to extremity, augmented by a
+    curvature term (cosine of the origin-mid-extremity angle).
+    """
+    if s1 == 0.0 and s2 == 0.0:
+        return 1.0  # linear segment
+
+    # origin (t=0)
+    if s1 > 0.0:
+        if s2 < 0.0:
+            A0, A2 = _xsp_pos_s1(k, 0.0, s1)
+            A1, A3 = _xsp_neg_s2(0.0, s2)
+        else:
+            A0, A2 = _xsp_pos_s1(k, 0.0, s1)
+            A1, A3 = _xsp_pos_s2(k, 0.0, s2)
+        xstart, ystart = _xsp_point((A0, A1, A2, A3), px, py)
+    else:
+        xstart, ystart = px[1], py[1]
+
+    # extremity (t=1)
+    if s2 > 0.0:
+        if s1 < 0.0:
+            A0, A2 = _xsp_neg_s1(1.0, s1)
+            A1, A3 = _xsp_pos_s2(k, 1.0, s2)
+        else:
+            A0, A2 = _xsp_pos_s1(k, 1.0, s1)
+            A1, A3 = _xsp_pos_s2(k, 1.0, s2)
+        xend, yend = _xsp_point((A0, A1, A2, A3), px, py)
+    else:
+        xend, yend = px[2], py[2]
+
+    # midpoint (t=0.5)
+    if s2 > 0.0:
+        if s1 < 0.0:
+            A0, A2 = _xsp_neg_s1(0.5, s1)
+            A1, A3 = _xsp_pos_s2(k, 0.5, s2)
+        else:
+            A0, A2 = _xsp_pos_s1(k, 0.5, s1)
+            A1, A3 = _xsp_pos_s2(k, 0.5, s2)
+    elif s1 < 0.0:
+        A0, A2 = _xsp_neg_s1(0.5, s1)
+        A1, A3 = _xsp_neg_s2(0.5, s2)
+    else:
+        A0, A2 = _xsp_pos_s1(k, 0.5, s1)
+        A1, A3 = _xsp_neg_s2(0.5, s2)
+    xmid, ymid = _xsp_point((A0, A1, A2, A3), px, py)
+
+    xv1, yv1 = xstart - xmid, ystart - ymid
+    xv2, yv2 = xend - xmid, yend - ymid
+    scal = xv1 * xv2 + yv1 * yv2
+    sides = math.sqrt((xv1 * xv1 + yv1 * yv1) * (xv2 * xv2 + yv2 * yv2))
+    angle_cos = 0.0 if sides == 0.0 else scal / sides
+
+    xlen = xend - xstart
+    ylen = yend - ystart
+    dist = math.sqrt(xlen * xlen + ylen * ylen)
+
+    # R (via XFig) does all step math in 1200 ppi units.  Our coordinates
+    # are in whatever linear unit the caller passed (usually inches), so
+    # scale by 1200 here to reproduce R's sampling density.  Downstream
+    # output coordinates are unaffected — only the step count changes.
+    dist = dist * 1200.0
+
+    # R's diagonal clamp (xspline.c:312-325) avoids runaway sampling when
+    # control points are far outside the device; we approximate it with a
+    # fixed cap equivalent to ~1.7 inches × 1200 diagonal.
+    if dist > 2000.0:
+        dist = 2000.0
+
+    n_steps = math.sqrt(dist) / 2.0
+    n_steps += int((1.0 + angle_cos) * 10.0)
+    step = 1.0 if n_steps == 0 else precision / n_steps
+    if step > _MAX_SPLINE_STEP or step == 0.0:
+        step = _MAX_SPLINE_STEP
+    return step
+
+
+# -- Segment sampling (xspline.c:344-423) -----------------------------------
+
+def _xsp_segment(step: float, k: int,
+                 px: Tuple[float, ...], py: Tuple[float, ...],
+                 s1: float, s2: float,
+                 out_x: List[float], out_y: List[float]) -> None:
+    """Port of ``spline_segment_computing`` — sample segment over ``t ∈ [0, 1)``.
+
+    Emits points into ``out_x`` / ``out_y`` with de-duplication against the
+    last emitted point (matches R's ``add_point`` which skips repeats).
+    """
+    t = 0.0
+    while t < 1.0:
+        A = _xsp_weights(k, t, s1, s2)
+        bx, by = _xsp_point(A, px, py)
+        if not out_x or out_x[-1] != bx or out_y[-1] != by:
+            out_x.append(bx)
+            out_y.append(by)
+        t += step
+
+
+def _xsp_last_segment(step: float, k: int,
+                      px: Tuple[float, ...], py: Tuple[float, ...],
+                      s1: float, s2: float,
+                      out_x: List[float], out_y: List[float]) -> None:
+    """Port of ``spline_last_segment_computing`` — one point at t=1."""
+    A = _xsp_weights(k, 1.0, s1, s2)
+    bx, by = _xsp_point(A, px, py)
+    if not out_x or out_x[-1] != bx or out_y[-1] != by:
+        out_x.append(bx)
+        out_y.append(by)
+
+
+# -- Open / closed drivers (xspline.c:455-547) ------------------------------
+
+def _xsp_compute_open(
+    x: NDArray[np.float64], y: NDArray[np.float64], s: NDArray[np.float64],
+    repEnds: bool, precision: float,
+) -> Tuple[NDArray[np.float64], NDArray[np.float64]]:
+    n = len(x)
+    if repEnds and n < 2:
+        raise ValueError("there must be at least two control points")
+    if not repEnds and n < 4:
+        raise ValueError("there must be at least four control points")
+
+    out_x: List[float] = []
+    out_y: List[float] = []
+
+    if repEnds:
+        # First control point is needed twice for the first segment.
+        # px/py/ps arrays are the 4-point sliding window.
+        px = [x[0], x[0], x[1], x[2 if n > 2 else 1]]
+        py = [y[0], y[0], y[1], y[2 if n > 2 else 1]]
+        ps = [s[0], s[0], s[1], s[2 if n > 2 else 1]]
+
+        k = 0
+        while True:
+            step = _xsp_step(k, px, py, ps[1], ps[2], precision)
+            _xsp_segment(step, k, tuple(px), tuple(py), ps[1], ps[2],
+                         out_x, out_y)
+            if k + 3 >= n:
+                break
+            # R's ``NEXT_CONTROL_POINTS(K, N)`` macro (xspline.c:438-442):
+            # ``px[0] = x[K % N]``, ``px[1] = x[(K+1) % N]``, etc.  K is the
+            # CURRENT segment index — not incremented before indexing.  Note
+            # this is why the sliding window overlaps between iterations.
+            px = [x[k % n], x[(k + 1) % n], x[(k + 2) % n], x[(k + 3) % n]]
+            py = [y[k % n], y[(k + 1) % n], y[(k + 2) % n], y[(k + 3) % n]]
+            ps = [s[k % n], s[(k + 1) % n], s[(k + 2) % n], s[(k + 3) % n]]
+            k += 1
+
+        # Last control point needed twice for the last segment.
+        if n == 2:
+            px = [x[n - 2], x[n - 2], x[n - 1], x[n - 1]]
+            py = [y[n - 2], y[n - 2], y[n - 1], y[n - 1]]
+            ps = [s[n - 2], s[n - 2], s[n - 1], s[n - 1]]
+        else:
+            px = [x[n - 3], x[n - 2], x[n - 1], x[n - 1]]
+            py = [y[n - 3], y[n - 2], y[n - 1], y[n - 1]]
+            ps = [s[n - 3], s[n - 2], s[n - 1], s[n - 1]]
+        step = _xsp_step(k, px, py, ps[1], ps[2], precision)
+        _xsp_segment(step, k, tuple(px), tuple(py), ps[1], ps[2],
+                     out_x, out_y)
+
+        # Final point: px[3], py[3] (xspline.c:510)
+        if not out_x or out_x[-1] != px[3] or out_y[-1] != py[3]:
+            out_x.append(float(px[3]))
+            out_y.append(float(py[3]))
+    else:
+        # repEnds=False: no endpoint replication.  Exactly n-3 segments,
+        # then one final-segment t=1 point.
+        step = 0.0
+        for k in range(n - 3):
+            px = [x[k], x[k + 1], x[k + 2], x[k + 3]]
+            py = [y[k], y[k + 1], y[k + 2], y[k + 3]]
+            ps = [s[k], s[k + 1], s[k + 2], s[k + 3]]
+            step = _xsp_step(k, px, py, ps[1], ps[2], precision)
+            _xsp_segment(step, k, tuple(px), tuple(py), ps[1], ps[2],
+                         out_x, out_y)
+        # Last segment's t=1 evaluation (xspline.c:516)
+        k = n - 4
+        px = [x[k], x[k + 1], x[k + 2], x[k + 3]]
+        py = [y[k], y[k + 1], y[k + 2], y[k + 3]]
+        ps = [s[k], s[k + 1], s[k + 2], s[k + 3]]
+        _xsp_last_segment(step, k, tuple(px), tuple(py), ps[1], ps[2],
+                          out_x, out_y)
+
+    # R trims leading / trailing duplicate points (grid.c:2494-2504).
+    # We emulate that: remove consecutive duplicates at start only
+    # (trailing dedup already happens in _xsp_segment's emit).
+    while len(out_x) > 1 and out_x[0] == out_x[1] and out_y[0] == out_y[1]:
+        out_x.pop(0)
+        out_y.pop(0)
+
+    return (np.asarray(out_x, dtype=np.float64),
+            np.asarray(out_y, dtype=np.float64))
+
+
+def _xsp_compute_closed(
+    x: NDArray[np.float64], y: NDArray[np.float64], s: NDArray[np.float64],
+    precision: float,
+) -> Tuple[NDArray[np.float64], NDArray[np.float64]]:
+    n = len(x)
+    if n < 3:
+        raise ValueError("there must be at least three control points")
+
+    out_x: List[float] = []
+    out_y: List[float] = []
+
+    # INIT_CONTROL_POINTS: (n-1, 0, 1, 2) mod n
+    idx = [(n - 1) % n, 0 % n, 1 % n, 2 % n]
+    px = [x[i] for i in idx]
+    py = [y[i] for i in idx]
+    ps = [s[i] for i in idx]
+
+    for k in range(n):
+        step = _xsp_step(k, px, py, ps[1], ps[2], precision)
+        _xsp_segment(step, k, tuple(px), tuple(py), ps[1], ps[2],
+                     out_x, out_y)
+        # NEXT_CONTROL_POINTS(K, N): (K..K+3) mod n
+        idx = [(k + 1) % n, (k + 2) % n, (k + 3) % n, (k + 4) % n]
+        px = [x[i] for i in idx]
+        py = [y[i] for i in idx]
+        ps = [s[i] for i in idx]
+
+    return (np.asarray(out_x, dtype=np.float64),
+            np.asarray(out_y, dtype=np.float64))
 
 
 # ===================================================================== #
