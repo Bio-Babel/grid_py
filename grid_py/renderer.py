@@ -1050,21 +1050,32 @@ class CairoRenderer(GridRenderer):
             ctx.restore()
         else:
             # Multi-line: split on \n, draw each line with line spacing.
-            # R uses lineheight * fontsize as inter-line distance.
+            # R's inter-line gap = lineheight × fontsize × 1.2 / 72 inches
+            # (= ``cra[1] × ipr[1] / default_ps`` on the standard device).
+            # In cairo device units this is ``device_fs × lineheight × 1.2``.
             ctx.save()
-            self._set_font(gp)
+            device_fs = self._set_font(gp)
             self._apply_stroke(gp)
 
-            # Measure each line and compute total block size
+            # Resolve lineheight from gp (R default = 1.2).
+            lineheight = 1.2
+            if gp is not None:
+                lh = gp.get("lineheight", None)
+                if lh is not None:
+                    lineheight = float(lh[0] if isinstance(lh, (list, tuple)) else lh)
+
+            # Measure each line and compute total block size.
             line_extents = [ctx.text_extents(ln) for ln in lines]
-            single_h = ctx.text_extents("Mg").height  # reference height
-            line_spacing = single_h * 1.2  # R default lineheight = 1.2
+            single_h = ctx.text_extents("Mg").height  # ink-based first-baseline offset
+            line_spacing = device_fs * lineheight * 1.2  # R's inter-line gap
             n_lines = len(lines)
 
             max_tw = max((e.width for e in line_extents), default=0)
-            total_h = single_h + line_spacing * (n_lines - 1)
+            # Block height: ink of first line + (n - 1) × gap, mirroring R's
+            # heightDetails.text (single-line = ink; extra lines add gap).
+            total_h = single_h + (n_lines - 1) * line_spacing
 
-            # Block offset so that (hjust, vjust) refer to the whole block
+            # Block offset so that (hjust, vjust) refer to the whole block.
             block_off_x = -max_tw * hjust
             block_off_y = -total_h * (1 - vjust) + single_h
 

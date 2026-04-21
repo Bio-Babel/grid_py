@@ -232,13 +232,23 @@ def _resolve_grob_gp(grob: Any) -> "Optional[Gpar]":
 def _text_bbox(grob: Any) -> tuple:
     """Compute (width, height) of the text bounding box in inches.
 
-    Port of R ``C_textBounds``: measures text extents and applies
-    rotation to compute the axis-aligned bounding box.  This is what
-    R's ``widthDetails.text`` and ``heightDetails.text`` use internally.
+    Mirrors what R's ``heightDetails.text`` / ``widthDetails.text`` return
+    (empirically verified against R 4.4 ``cairo_png`` at 150 dpi):
 
-    The grob's gp is merged with the current viewport stack gpar,
-    matching R's behavior where grobWidth() inherits fontsize etc.
-    from the viewport context.
+      width  = max(per-line ink widths)           — R's ``GEStrWidth``
+      height = ink_height(first line)
+               + (n - 1) × cex × lineheight × fontsize × 1.2 / 72
+                                                    — R's ``GEStrHeight``
+
+    The per-extra-line gap ``1.2 × fontsize / 72`` is R's device-level
+    ``cra[1] × ipr[1] / default_ps`` collapsed for the standard cairo /
+    PostScript setups (default_ps = 12 pt, cin[1] = 1.2 × 12 / 72 in).
+
+    Single-line text is therefore independent of ``lineheight`` (matches
+    R exactly), while each extra newline adds the lineheight-scaled gap.
+
+    The grob's gp is merged with the current viewport stack gpar, so
+    ``grobHeight`` inherits fontsize / lineheight from the viewport.
     """
     import math
     labels = _normalise_labels(grob)
@@ -248,15 +258,40 @@ def _text_bbox(grob: Any) -> tuple:
     if not labels:
         return (0.0, 0.0)
 
+    # Resolve cex and lineheight; fontsize is read per-line by calc_string_metric.
+    cex = 1.0
+    lineheight = 1.2
+    fontsize = 12.0
+    if gp is not None:
+        fs = gp.get("fontsize", None)
+        if fs is not None:
+            fontsize = float(fs[0] if isinstance(fs, (list, tuple)) else fs)
+        cx = gp.get("cex", None)
+        if cx is not None:
+            cex = float(cx[0] if isinstance(cx, (list, tuple)) else cx)
+        lh = gp.get("lineheight", None)
+        if lh is not None:
+            lineheight = float(lh[0] if isinstance(lh, (list, tuple)) else lh)
+
+    # Per-extra-line gap in inches — matches R's ``cra[1] × ipr[1] / default_ps``
+    # collapsed for the standard device (= fontsize × 1.2 / 72).
+    inter_line_gap = cex * lineheight * fontsize * 1.2 / 72.0
+
     xmin = float("inf")
     xmax = float("-inf")
     ymin = float("inf")
     ymax = float("-inf")
 
     for lab in labels:
-        m = calc_string_metric(lab, gp=gp)
-        w = m["width"]
-        h = m["ascent"] + m["descent"]
+        lines = lab.split("\n") if lab else [""]
+        n_lines = len(lines)
+        # Width: max per-line width (R's ``GEStrWidth`` walks each line).
+        w = max(calc_string_metric(ln, gp=gp)["width"] for ln in lines)
+        # Height: ink of first line + gap × (n - 1).  R uses the first
+        # line's ink bounds (``ascent + descent``) and extends by per-line
+        # gaps for additional lines.
+        m0 = calc_string_metric(lines[0], gp=gp)
+        h = m0["ascent"] + m0["descent"] + (n_lines - 1) * inter_line_gap
 
         if rot == 0.0:
             # No rotation: bbox is just the text extent
@@ -268,19 +303,19 @@ def _text_bbox(grob: Any) -> tuple:
             sin_r = math.sin(rad)
             # Four corners of the unrotated text rectangle
             corners = [(0, 0), (w, 0), (w, h), (0, h)]
-            corners_x = [cx * cos_r - cy * sin_r for cx, cy in corners]
-            corners_y = [cx * sin_r + cy * cos_r for cx, cy in corners]
+            corners_x = [cx_ * cos_r - cy_ * sin_r for cx_, cy_ in corners]
+            corners_y = [cx_ * sin_r + cy_ * cos_r for cx_, cy_ in corners]
 
-        for cx in corners_x:
-            if cx < xmin:
-                xmin = cx
-            if cx > xmax:
-                xmax = cx
-        for cy in corners_y:
-            if cy < ymin:
-                ymin = cy
-            if cy > ymax:
-                ymax = cy
+        for cx_ in corners_x:
+            if cx_ < xmin:
+                xmin = cx_
+            if cx_ > xmax:
+                xmax = cx_
+        for cy_ in corners_y:
+            if cy_ < ymin:
+                ymin = cy_
+            if cy_ > ymax:
+                ymax = cy_
 
     if xmin == float("inf"):
         return (0.0, 0.0)

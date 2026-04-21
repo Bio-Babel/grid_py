@@ -160,6 +160,17 @@ _GROB_METRIC_TYPES: frozenset = frozenset(
 def _eval_str_metric(unit_type: str, data: Any, scale: float = 1.0) -> float:
     """Evaluate a string-metric unit to an inch value.
 
+    Mirrors R's ``GEStrWidth`` / ``GEStrHeight`` (src/main/engine.c), which
+    back ``stringWidth`` / ``stringHeight`` for text units:
+
+      - split on ``\\n`` into lines,
+      - width  = max(per-line widths),
+      - height = ink(first line) + (n - 1) × cex × lineheight × fontsize × 1.2 / 72
+
+    Uses the current viewport's gpar (fontsize, cex, lineheight) to match
+    R's behaviour where ``stringWidth`` inherits typography from the
+    enclosing gpar context.
+
     Uses a lazy import of :func:`._size.calc_string_metric` to avoid
     circular dependencies (``_size`` imports ``Unit`` from this module).
 
@@ -181,15 +192,44 @@ def _eval_str_metric(unit_type: str, data: Any, scale: float = 1.0) -> float:
     from ._size import calc_string_metric  # lazy – avoids circular import
 
     text = str(data) if data is not None else ""
-    m = calc_string_metric(text)
+
+    # Inherit fontsize / cex / lineheight from the current viewport gpar
+    # stack, matching R's ``stringWidth`` which uses the enclosing gpar.
+    try:
+        from ._gpar import get_gpar
+        gp = get_gpar()
+    except Exception:
+        gp = None
+
+    fontsize = 12.0
+    cex = 1.0
+    lineheight = 1.2
+    if gp is not None:
+        fs = gp.get("fontsize", None)
+        if fs is not None:
+            fontsize = float(fs[0] if isinstance(fs, (list, tuple)) else fs)
+        cx = gp.get("cex", None)
+        if cx is not None:
+            cex = float(cx[0] if isinstance(cx, (list, tuple)) else cx)
+        lh = gp.get("lineheight", None)
+        if lh is not None:
+            lineheight = float(lh[0] if isinstance(lh, (list, tuple)) else lh)
+
+    lines = text.split("\n") if text else [""]
+    n = len(lines)
+    m0 = calc_string_metric(lines[0], gp=gp)
+
     if unit_type == "strwidth":
-        return m["width"] * scale
+        w = max(calc_string_metric(ln, gp=gp)["width"] for ln in lines)
+        return w * scale
     elif unit_type == "strheight":
-        return (m["ascent"] + m["descent"]) * scale
+        ink_first = m0["ascent"] + m0["descent"]
+        inter_line_gap = cex * lineheight * fontsize * 1.2 / 72.0
+        return (ink_first + (n - 1) * inter_line_gap) * scale
     elif unit_type == "strascent":
-        return m["ascent"] * scale
+        return m0["ascent"] * scale
     elif unit_type == "strdescent":
-        return m["descent"] * scale
+        return m0["descent"] * scale
     return 0.0  # pragma: no cover
 
 

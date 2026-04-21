@@ -70,14 +70,33 @@ class TestTextGrobMetrics:
         assert h._units[0] == "inches"
         assert h._values[0] > 0
 
-    def test_height_equals_ascent_plus_descent(self):
-        tg = text_grob("X")
-        h = height_details(tg)
-        a = ascent_details(tg)
-        d = descent_details(tg)
-        assert h._values[0] == pytest.approx(
-            a._values[0] + d._values[0], abs=1e-6
-        )
+    def test_single_line_height_independent_of_lineheight(self):
+        # R's heightDetails.text for single-line text is independent of
+        # gpar()$lineheight — it returns the ink bounds of the one line.
+        # Verified against R 4.4 cairo_png @ 150 dpi.
+        h_default = height_details(text_grob("X"))  # lineheight=1.2
+        h_small = height_details(text_grob("X", gp=Gpar(lineheight=0.3)))
+        h_large = height_details(text_grob("X", gp=Gpar(lineheight=3.0)))
+        assert h_small._values[0] == pytest.approx(h_default._values[0], abs=1e-6)
+        assert h_large._values[0] == pytest.approx(h_default._values[0], abs=1e-6)
+
+    def test_multi_line_height_adds_per_line_gap(self):
+        # R's heightDetails.text for n lines =
+        #   ink_first_line + (n-1) × cex × lineheight × fontsize × 1.2 / 72
+        h1 = height_details(text_grob("X", gp=Gpar(fontsize=12, lineheight=1.2)))
+        h2 = height_details(text_grob("X\nY", gp=Gpar(fontsize=12, lineheight=1.2)))
+        h3 = height_details(text_grob("X\nY\nZ", gp=Gpar(fontsize=12, lineheight=1.2)))
+        gap = 1.0 * 1.2 * 12 * 1.2 / 72.0  # = 0.24 inches
+        assert h2._values[0] == pytest.approx(h1._values[0] + gap, abs=1e-6)
+        assert h3._values[0] == pytest.approx(h1._values[0] + 2 * gap, abs=1e-6)
+
+    def test_multi_line_gap_scales_linearly_with_lineheight(self):
+        h_base = height_details(text_grob("X\nY", gp=Gpar(fontsize=12, lineheight=1.0)))
+        h_double = height_details(text_grob("X\nY", gp=Gpar(fontsize=12, lineheight=2.0)))
+        h_single = height_details(text_grob("X", gp=Gpar(fontsize=12)))
+        gap_base = h_base._values[0] - h_single._values[0]
+        gap_double = h_double._values[0] - h_single._values[0]
+        assert gap_double == pytest.approx(2 * gap_base, abs=1e-6)
 
     def test_ascent_single_label(self):
         a = ascent_details(text_grob("X"))

@@ -467,27 +467,48 @@ def _transform_to_inches(
         return 0.0
 
     # ---- String metrics (unit.c:720-760) ----
+    #
+    # Mirrors R's ``GEStrWidth`` / ``GEStrHeight`` / ``GEStrMetric``:
+    #
+    #   - split the label on ``\n`` into lines;
+    #   - ``strwidth``  = max(per-line widths)                       (GEStrWidth)
+    #   - ``strheight`` = ink(first line) + (n−1) × cex × lineheight × ps × 1.2 / 72
+    #                                                                (GEStrHeight)
+    #   - ``strascent`` / ``strdescent`` = ink metric of the first line
+    #                                                                (GEStrMetric)
     if utype in ("strwidth", "strheight", "strascent", "strdescent"):
-        if str_metric_fn is not None:
-            text = str(data) if data is not None else ""
-            m = str_metric_fn(text, None)
-            if utype == "strwidth":
-                return value * m.get("width", 0.0)
-            elif utype == "strheight":
-                return value * (m.get("ascent", 0.0) + m.get("descent", 0.0))
-            elif utype == "strascent":
-                return value * m.get("ascent", 0.0)
-            else:
-                return value * m.get("descent", 0.0)
-        # Fallback: estimate from font size (gc->ps * gc->cex, where
-        # gc->ps = fontsize * GSS_SCALE)
         text = str(data) if data is not None else ""
+        lines = text.split("\n") if text else [""]
+        n = len(lines)
+        if str_metric_fn is not None:
+            m0 = str_metric_fn(lines[0], None)
+            if utype == "strwidth":
+                w = max(str_metric_fn(ln, None).get("width", 0.0) for ln in lines)
+                return value * w
+            elif utype == "strheight":
+                ink_first = m0.get("ascent", 0.0) + m0.get("descent", 0.0)
+                inter_line_gap = (
+                    gc_cex * gc_lineheight * gc_fontsize * 1.2 / 72.0
+                )
+                return value * (ink_first + (n - 1) * inter_line_gap)
+            elif utype == "strascent":
+                return value * m0.get("ascent", 0.0)
+            else:
+                return value * m0.get("descent", 0.0)
+        # Fallback: estimate from font size when no measurement callback is
+        # available.  ``gc->ps = fontsize * GSS_SCALE`` in R.
         effective = gc_fontsize * scale * gc_cex
         char_width = effective * 0.6 / 72.0
         if utype == "strwidth":
-            return value * len(text) * char_width
+            max_line_len = max((len(ln) for ln in lines), default=0)
+            return value * max_line_len * char_width
         elif utype == "strheight":
-            return value * effective / 72.0
+            # First line approximated as one ``effective`` unit of height;
+            # add the inter-line gap for extra lines.
+            inter_line_gap = (
+                gc_cex * gc_lineheight * gc_fontsize * 1.2 / 72.0
+            )
+            return value * (effective / 72.0 + (n - 1) * inter_line_gap)
         elif utype == "strascent":
             return value * effective * 0.75 / 72.0
         else:
