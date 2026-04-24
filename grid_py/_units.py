@@ -301,7 +301,20 @@ def _try_resolve_with_renderer(
     state = get_state()
     renderer = state.get_renderer()
 
-    if renderer is None or not hasattr(renderer, "_resolve_to_inches_idx"):
+    if renderer is None:
+        # R parity: `convertUnit` (unit.R:59-75) dispatches to `L_convert` in
+        # src/unit.c, which resolves context via `GEcurrentDevice()`. When no
+        # device is open, R's graphics system auto-opens its default device
+        # (PDF, 7×7 in) and converts against it. We replicate that here by
+        # lazily installing a default 7×7 in CairoRenderer the first time a
+        # context-dependent conversion is requested — matching R's observed
+        # behaviour: `convertHeight(unit(0.3,"npc"),"mm") == 53.34` (=0.3×7in
+        # in mm) without any prior `grid_newpage()` / `pdf()` call.
+        from .renderer import CairoRenderer
+        renderer = CairoRenderer(width=7.0, height=7.0)
+        state.init_device(renderer)
+
+    if not hasattr(renderer, "_resolve_to_inches_idx"):
         return None
 
     # Build a single-element Unit for the source

@@ -566,12 +566,22 @@ class TestConvertUnit:
         assert isinstance(result, np.ndarray)
         assert result[0] == pytest.approx(1.0, abs=0.01)
 
-    def test_context_dependent_warns(self):
+    def test_context_dependent_auto_opens_default_device(self):
+        # R parity: convertUnit(unit(1,"npc"), "cm") with no prior device
+        # auto-opens a 7x7 in PDF-equivalent via GEcurrentDevice() and
+        # resolves against it. 1 npc width = 7 in = 17.78 cm. (unit.R:59-75
+        # → src/unit.c L_convert). Previous Python behaviour of returning
+        # the unit unchanged with a warning was a divergence.
+        from grid_py._state import get_state
+        get_state()._renderer = None
+
         u = Unit(1, "npc")
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             result = convert_unit(u, "cm")
-            assert len(w) >= 1
+        assert isinstance(result, Unit)
+        assert float(result.values[0]) == pytest.approx(17.78, abs=1e-3)
+        assert len(w) == 0, "R-faithful auto-open should not warn"
 
     def test_same_non_absolute_unit(self):
         u = Unit(0.5, "npc")
