@@ -232,13 +232,36 @@ def _resolve_grob_gp(grob: Any) -> "Optional[Gpar]":
 def _text_bbox(grob: Any) -> tuple:
     """Compute (width, height) of the text bounding box in inches.
 
-    Mirrors what R's ``heightDetails.text`` / ``widthDetails.text`` return
-    (empirically verified against R 4.4 ``cairo_png`` at 150 dpi):
+    Ports R's ``heightDetails.text`` / ``widthDetails.text`` (grid's
+    ``primitives.R:1430-1452``) — R's ``grobHeight`` on a text grob
+    returns the **ascent only** (glyph extent above baseline), never
+    the descent. ``grobDescent`` is a separate method (see
+    ``descentDetails.text``) and is exposed independently so that
+    callers can add it when needed. ggplot2's ``titleGrob``
+    (margins.R:115-132) relies on this convention — it uses
+    ``unit(1, "grobheight", grob) + y_descent`` to assemble the final
+    height — so any deviation here double-counts the descent.
 
-      width  = max(per-line ink widths)           — R's ``GEStrWidth``
-      height = ink_height(first line)
+    Empirical verification (R 4.4 ``cairo_png`` at 150 dpi, default
+    Helvetica, fontsize 13.2 pt):
+
+      grobHeight(textGrob("A long title", fs=13.2))         = 3.293 mm
+      grobHeight(textGrob("gjpqy",        fs=13.2))         = 3.293 mm
+      grobHeight(textGrob("y",            fs=13.2))         = 3.293 mm
+
+    — i.e. the value is a font-level constant, independent of the
+    label content. Our cairo-backed ``calc_string_metric`` returns a
+    per-label ascent that varies slightly with glyph mix, which is the
+    closest we can get without implementing a full AFM font-metric
+    path; residual ≤ 0.3 mm discrepancy is a font-file difference
+    (AFM Helvetica vs. cairo's "Sans" fallback) and outside the
+    scope of this bbox function.
+
+    Height formula (port of R's ``GEStrHeight``):
+
+      width  = max(per-line ink widths)
+      height = ascent(first line)
                + (n - 1) × cex × lineheight × fontsize × 1.2 / 72
-                                                    — R's ``GEStrHeight``
 
     The per-extra-line gap ``1.2 × fontsize / 72`` is R's device-level
     ``cra[1] × ipr[1] / default_ps`` collapsed for the standard cairo /
@@ -287,11 +310,14 @@ def _text_bbox(grob: Any) -> tuple:
         n_lines = len(lines)
         # Width: max per-line width (R's ``GEStrWidth`` walks each line).
         w = max(calc_string_metric(ln, gp=gp)["width"] for ln in lines)
-        # Height: ink of first line + gap × (n - 1).  R uses the first
-        # line's ink bounds (``ascent + descent``) and extends by per-line
-        # gaps for additional lines.
+        # Height: ascent of the first line + per-line gap × (n - 1).
+        # R's ``heightDetails.text`` / ``GEStrHeight`` returns ASCENT
+        # only — never descent. Descent is a separate method
+        # (``descentDetails.text``). Including descent here would
+        # double-count it downstream in ggplot2 ``titleGrob``, which
+        # adds ``grobDescent`` manually to form the rendered height.
         m0 = calc_string_metric(lines[0], gp=gp)
-        h = m0["ascent"] + m0["descent"] + (n_lines - 1) * inter_line_gap
+        h = m0["ascent"] + (n_lines - 1) * inter_line_gap
 
         if rot == 0.0:
             # No rotation: bbox is just the text extent
