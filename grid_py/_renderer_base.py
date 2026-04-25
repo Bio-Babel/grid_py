@@ -538,6 +538,28 @@ class GridRenderer(ABC):
     # evaluateGrobUnit -- port of R unit.c:325-590                          #
     # ===================================================================== #
 
+    # Per-renderer cycle guard — populated with id(grob) for every grob
+    # currently being measured. ``_evaluate_grob_unit`` consults this
+    # before pushing the grob's vp; re-entry for the same grob means
+    # the vp itself references its own grob*Details (e.g.
+    # ``viewport(width = grobWidth(self))``), which would otherwise
+    # infinite-recurse through calcViewportTransform → grob_metric_fn
+    # → _evaluate_grob_unit → push vp → ...
+    #
+    # R bounds the same recursion implicitly because its
+    # widthDetails.gtable returns an absolute mm sum, and R's
+    # setviewport/calcViewportTransform doesn't re-trigger the metric
+    # path during the recursive pushViewport (verified empirically:
+    # preDraw.gtable runs exactly 3 times for one toplevel grid.draw —
+    # not unbounded). We mirror the bound explicitly.
+    @property
+    def _measuring_grobs(self) -> set:
+        s = getattr(self, "_measuring_grobs_set", None)
+        if s is None:
+            s = set()
+            self._measuring_grobs_set = s
+        return s
+
     def _evaluate_grob_unit(
         self,
         grob: Any,
@@ -590,6 +612,46 @@ class GridRenderer(ABC):
 
         if not isinstance(grob, Grob):
             return 0.0
+
+        # --- Cycle break for self-referential grobwidth/grobheight ---
+        # When we're already measuring this grob and the grob's vp
+        # references its own width/height (e.g. patchwork's
+        # ``as_patch.GT`` builds ``viewport(width=grobWidth(grob))``),
+        # the recursive vp push would trigger _evaluate_grob_unit for
+        # the same grob again, etc. Resolve widthDetails/heightDetails
+        # directly without the recursive push — for non-context-
+        # dependent grobs (gtable widthDetails returns absolute_size of
+        # the widths sum) this gives the same answer as the full path,
+        # matching R's behaviour where preDraw.gtable runs a bounded
+        # number of times rather than unboundedly.
+        if id(grob) in self._measuring_grobs:
+            if unit_type == "grobwidth":
+                ru = width_details(grob)
+                axis = "x"
+            elif unit_type == "grobheight":
+                ru = height_details(grob)
+                axis = "y"
+            elif unit_type == "grobascent":
+                ru = ascent_details(grob)
+                axis = "y"
+            elif unit_type == "grobdescent":
+                ru = descent_details(grob)
+                axis = "y"
+            else:
+                return 0.0
+            if ru is None:
+                return 0.0
+            from ._units import Unit as _U
+            if not isinstance(ru, _U):
+                return 0.0
+            if len(ru) == 1 and ru._units[0] == "null":
+                return 0.0
+            return float(self._resolve_to_inches(ru, axis, True))
+
+        # Capture id BEFORE make_context() rebinds ``grob`` to the
+        # context-wrapped copy — we need to release the same id we added.
+        _measuring_id = id(grob)
+        self._measuring_grobs.add(_measuring_id)
 
         # --- Save state (R unit.c:355-377) ---
         saved_dl_on = state._dl_on
@@ -666,6 +728,7 @@ class GridRenderer(ABC):
             state.replace_gpar(saved_gpar)
             state._current_grob = saved_current_grob
             state.set_display_list_on(saved_dl_on)
+            self._measuring_grobs.discard(_measuring_id)
 
         return result
 

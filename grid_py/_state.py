@@ -224,6 +224,12 @@ class GridState:
         # GSS_GROUPS: group registry for define/use (R grid.h:63, state.c:51)
         # Maps group name → dict with keys: ref, xy, xyin, wh, r, etc.
         self._groups: Dict[str, Any] = {}
+        # Per-push counter of redundant self-pushes (the same vp pushed
+        # again while already current). Each genuine push appends a 0;
+        # a redundant push increments the top entry; pops decrement
+        # before actually unwinding. Prevents the cyclic parent chain
+        # that would otherwise hang ``current_vp_path``.
+        self._redundant_push_count: List[int] = [0]
 
     # ---- reset ------------------------------------------------------------
 
@@ -244,7 +250,27 @@ class GridState:
         vp : Any
             A viewport-like object.  Must expose ``name``, ``parent``,
             and ``children`` attributes (or dict keys).
+
+        Notes
+        -----
+        Pushing the same viewport object twice (e.g. when a Gtable's
+        ``make_context`` builds ``VpStack(orig_vp, layout_vp)`` and
+        the iterating push hits ``orig_vp`` while ``orig_vp`` is
+        already the current vp — happens in ``_evaluate_grob_unit``'s
+        preDraw for self-referential ``viewport(width = grobWidth(self))``
+        setups) would otherwise set ``vp.parent = vp`` and produce a
+        cyclic parent chain that deadlocks ``current_vp_path``. The
+        Python port stores parent on the vp object itself (rather than
+        on a separate per-push record like R's grid does), so we
+        track redundant self-pushes on a counter stack and treat the
+        matching ``up_viewport`` / ``pop_viewport`` as no-ops so depth
+        stays balanced.
         """
+        if vp is self._current_vp:
+            self._redundant_push_count[-1] = (
+                self._redundant_push_count[-1] + 1
+            )
+            return
         _vp_set_attr(vp, "parent", self._current_vp)
         children = _vp_children(self._current_vp)
         if children is None:
@@ -252,6 +278,7 @@ class GridState:
             _vp_set_attr(self._current_vp, "children", children)
         children.append(vp)
         self._current_vp = vp
+        self._redundant_push_count.append(0)
 
     def pop_viewport(self, n: int = 1) -> None:
         """Pop *n* viewports, navigating back toward the root.
@@ -272,8 +299,14 @@ class GridState:
         if n == 0:
             # Pop to root.
             self._current_vp = self._vp_tree
+            self._redundant_push_count = [0]
             return
         for _ in range(n):
+            # First absorb any redundant self-pushes recorded for the
+            # current vp (see ``push_viewport`` notes).
+            if self._redundant_push_count and self._redundant_push_count[-1] > 0:
+                self._redundant_push_count[-1] -= 1
+                continue
             parent = _vp_parent(self._current_vp)
             if parent is None:
                 raise ValueError(
@@ -286,6 +319,8 @@ class GridState:
             except ValueError:
                 pass
             self._current_vp = parent
+            if len(self._redundant_push_count) > 1:
+                self._redundant_push_count.pop()
 
     def up_viewport(self, n: int = 1) -> None:
         """Navigate up *n* levels without removing viewports from the tree.
@@ -305,14 +340,21 @@ class GridState:
             raise ValueError(f"'n' must be non-negative, got {n}")
         if n == 0:
             self._current_vp = self._vp_tree
+            self._redundant_push_count = [0]
             return
         for _ in range(n):
+            # Absorb redundant self-pushes first.
+            if self._redundant_push_count and self._redundant_push_count[-1] > 0:
+                self._redundant_push_count[-1] -= 1
+                continue
             parent = _vp_parent(self._current_vp)
             if parent is None:
                 raise ValueError(
                     "Cannot navigate above the root viewport."
                 )
             self._current_vp = parent
+            if len(self._redundant_push_count) > 1:
+                self._redundant_push_count.pop()
 
     def down_viewport(self, name: str, strict: bool = False) -> int:
         """Navigate down to a named viewport (breadth-first search).
