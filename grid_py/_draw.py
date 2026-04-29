@@ -412,7 +412,15 @@ def _render_grob(
             xs, ys = _calc_xspline_points(
                 x, y, shape=shape_arr, open_=open_, repEnds=rep_ends,
             )
-            renderer.draw_polyline(xs, ys, id_=None, gp=gp)
+            # R's ``xsplineGrob(open=FALSE)`` is a *filled closed* shape, not
+            # a stroked path; route through ``draw_polygon`` so ``gp$fill``
+            # actually paints (R/grid: drawDetails.xspline → C_xspline,
+            # filled when ``open == FALSE``).  ``open=TRUE`` stays a stroked
+            # polyline.
+            if open_:
+                renderer.draw_polyline(xs, ys, id_=None, gp=gp)
+            else:
+                renderer.draw_polygon(xs, ys, gp=gp)
             if arr is not None and len(xs) >= 2:
                 _draw_arrow_heads(xs, ys, arr, renderer, gp)
         else:
@@ -436,12 +444,24 @@ def _render_grob(
                 out_id += 1
                 per_group.append((xs_g, ys_g))
             if all_xs:
-                renderer.draw_polyline(
-                    np.asarray(all_xs, dtype=float),
-                    np.asarray(all_ys, dtype=float),
-                    id_=np.asarray(all_ids, dtype=int),
-                    gp=gp,
-                )
+                # Multi-id closed splines render as N separate filled
+                # subpolygons (R: xsplineGrob(id=..., open=FALSE)); use
+                # ``draw_path`` with the path_id array.  Open splines stay
+                # multi-stroke polylines.
+                if open_:
+                    renderer.draw_polyline(
+                        np.asarray(all_xs, dtype=float),
+                        np.asarray(all_ys, dtype=float),
+                        id_=np.asarray(all_ids, dtype=int),
+                        gp=gp,
+                    )
+                else:
+                    renderer.draw_path(
+                        np.asarray(all_xs, dtype=float),
+                        np.asarray(all_ys, dtype=float),
+                        path_id=np.asarray(all_ids, dtype=int),
+                        gp=gp,
+                    )
                 if arr is not None:
                     for xs_g, ys_g in per_group:
                         if len(xs_g) >= 2:

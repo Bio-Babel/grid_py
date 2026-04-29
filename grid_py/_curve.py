@@ -1383,6 +1383,8 @@ def grid_curve(
 def xspline_grob(
     x: Optional[Any] = None,
     y: Optional[Any] = None,
+    id: Optional[Any] = None,
+    id_lengths: Optional[Any] = None,
     default_units: str = "npc",
     shape: Union[float, Sequence[float]] = 0.0,
     open_: bool = True,
@@ -1402,6 +1404,15 @@ def xspline_grob(
     x, y : Unit, numeric, sequence, or None
         Control-point coordinates.  Defaults to ``Unit([0, 1], "npc")``
         when ``None``.
+    id : array-like of int or None
+        Group label for each control point.  Points sharing an ``id`` are
+        rendered as one X-spline; the grob therefore renders one spline
+        per unique ``id`` value.  Mirrors R ``xsplineGrob(id=...)``.
+        Mutually meaningful with ``id_lengths``: pass at most one.
+    id_lengths : array-like of int or None
+        Run-length encoding of ``id``: the n-th entry is the number of
+        consecutive control points belonging to spline n.  Mirrors R's
+        ``xsplineGrob(id.lengths=...)``.
     default_units : str
         Unit type for bare numerics.
     shape : float or sequence of float
@@ -1439,9 +1450,16 @@ def xspline_grob(
     if np.any((shape_arr < -1) | (shape_arr > 1)):
         raise ValueError("all 'shape' values must be between -1 and 1")
 
+    id_arr = None if id is None else np.asarray(id, dtype=np.int64)
+    id_lengths_arr = (
+        None if id_lengths is None else np.asarray(id_lengths, dtype=np.int64)
+    )
+
     return Grob(
         x=x,
         y=y,
+        id=id_arr,
+        id_lengths=id_lengths_arr,
         shape=shape_arr,
         open_=bool(open_),
         arrow=arrow,
@@ -1456,6 +1474,8 @@ def xspline_grob(
 def grid_xspline(
     x: Optional[Any] = None,
     y: Optional[Any] = None,
+    id: Optional[Any] = None,
+    id_lengths: Optional[Any] = None,
     default_units: str = "npc",
     shape: Union[float, Sequence[float]] = 0.0,
     open_: bool = True,
@@ -1497,7 +1517,8 @@ def grid_xspline(
         The xspline grob.
     """
     grob = xspline_grob(
-        x=x, y=y, default_units=default_units,
+        x=x, y=y, id=id, id_lengths=id_lengths,
+        default_units=default_units,
         shape=shape, open_=open_, arrow=arrow,
         repEnds=repEnds, name=name, gp=gp, vp=vp,
     )
