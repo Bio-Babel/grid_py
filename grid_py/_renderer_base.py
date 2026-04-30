@@ -425,8 +425,15 @@ class GridRenderer(ABC):
         from ._layout import _calc_layout_sizes, GridLayout
 
         if isinstance(layout, GridLayout):
+            # Use device-units-per-inch (= dpi for raster ImageSurface, 72 for
+            # vector PDF/SVG/PS surfaces) so that absolute units (cm/mm/in/pt
+            # …) get converted to the SAME unit as ``parent_w``/``parent_h``.
+            # Passing ``self.dpi`` blindly would, for vector surfaces, scale
+            # absolute widths by dpi while the parent is measured in points,
+            # over-allocating fixed cells by ``dpi/72`` and shrinking the
+            # null-unit panel by the same factor.
             col_widths, row_heights = _calc_layout_sizes(
-                layout, parent_w, parent_h, self.dpi,
+                layout, parent_w, parent_h, self._dev_units_per_inch,
             )
         else:
             nrow = getattr(layout, "nrow", 1)

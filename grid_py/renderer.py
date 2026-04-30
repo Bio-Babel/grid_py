@@ -141,6 +141,17 @@ class CairoRenderer(GridRenderer):
             if filename is None:
                 raise ValueError("filename is required for SVG surface")
             self._surface = cairo.SVGSurface(filename, width_pt, height_pt)
+            # Cairo's SVGSurface measures user-space in points; emit explicit
+            # ``pt`` units in the resulting <svg width="...pt" height="...pt">
+            # so SVG renderers (browsers, cairosvg, Inkscape) interpret the
+            # canvas at the intended physical size instead of treating the
+            # raw numbers as user-units (= pixels by SVG default).
+            try:
+                self._surface.set_document_unit(cairo.SVG_UNIT_PT)
+            except (AttributeError, TypeError):
+                # Older pycairo / cairo without set_document_unit — file is
+                # still well-formed, just unit-less.
+                pass
         elif surface_type == "ps":
             if filename is None:
                 raise ValueError("filename is required for PS surface")
@@ -322,6 +333,34 @@ class CairoRenderer(GridRenderer):
 
     # ---- gpar application --------------------------------------------------
 
+    def _lwd_to_user(self, lwd_pt: float) -> float:
+        """Convert R-grid lwd (points) to a Cairo user-space line width.
+
+        R's grid measures ``lwd`` in 1/72 inch (points) regardless of the
+        active viewport scale — a value of 1 should always produce a stroke
+        1pt wide on the output medium.  Cairo's ``set_line_width`` takes a
+        user-space distance, so we have to:
+
+        1. Map points → device units.  Raster ``ImageSurface`` has 1 user
+           unit = 1 pixel, so device units per point = ``dpi/72``.  Vector
+           surfaces (PDF/SVG/PS) have 1 user unit = 1 pt, so the conversion
+           factor is 1.0.  Equivalently, use ``_dev_units_per_inch / 72``.
+        2. Undo any active CTM scaling via ``device_to_user_distance`` so
+           that nested viewports (which scale the CTM) do not also scale
+           the stroke.
+
+        This is the analogue of the font-size handling in ``_set_font``.
+        """
+        if self._surface_type == "image":
+            lw_dev = lwd_pt * self.dpi / 72.0
+        else:
+            lw_dev = lwd_pt
+        try:
+            ux, uy = self._ctx.device_to_user_distance(lw_dev, lw_dev)
+            return max(abs(ux), abs(uy))
+        except Exception:
+            return lw_dev
+
     def _apply_stroke(self, gp: Optional[Gpar]) -> Tuple[float, float, float, float]:
         """Set stroke colour, line width, dash, caps, joins from Gpar.
 
@@ -331,7 +370,7 @@ class CairoRenderer(GridRenderer):
         ctx = self._ctx
         if gp is None:
             ctx.set_source_rgba(0, 0, 0, 1)
-            ctx.set_line_width(1.0)
+            ctx.set_line_width(self._lwd_to_user(1.0))
             return (0.0, 0.0, 0.0, 1.0)
 
         col = gp.get("col", None)
@@ -367,24 +406,7 @@ class CairoRenderer(GridRenderer):
         # R semantics: lwd=0 means invisible line
         if lw <= 0:
             return (0.0, 0.0, 0.0, 0.0)
-        # R grid semantics: ``lwd`` is always in **points** (1/72 inch)
-        # regardless of the current viewport's scale.  Cairo's
-        # ``set_line_width`` takes a user-space distance, which the
-        # viewport CTM has scaled down to NPC-like units — so a value
-        # of 0.5 user-space becomes sub-pixel after ``scale(w, h)``.
-        # Convert ``lw`` from points → device pixels using the
-        # renderer's DPI, then back to user-space via
-        # ``device_to_user_distance`` so the stroke width stays at
-        # 0.5pt on the output device no matter how deep the
-        # viewport stack is (matches R grid's device-unit lwd).
-        dpi = getattr(self, "dpi", None) or getattr(self, "_dpi", 72.0) or 72.0
-        lw_px = lw * dpi / 72.0
-        try:
-            ux, uy = ctx.device_to_user_distance(lw_px, lw_px)
-            lw_user = max(abs(ux), abs(uy))
-        except Exception:
-            lw_user = lw
-        ctx.set_line_width(lw_user)
+        ctx.set_line_width(self._lwd_to_user(lw))
 
         lty = gp.get("lty", None)
         if lty is not None:
@@ -1197,7 +1219,7 @@ class CairoRenderer(GridRenderer):
         """
         ctx.save()
         ctx.new_path()  # clear any residual path from prior draws
-        ctx.set_line_width(lwd)
+        ctx.set_line_width(self._lwd_to_user(lwd))
 
         if pch_val <= 14:
             # --- Group 0-14: stroke-only (use col for outline, no fill) ---
