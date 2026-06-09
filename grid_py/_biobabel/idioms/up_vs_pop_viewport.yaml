@@ -1,0 +1,58 @@
+id: grid_py.up_vs_pop_viewport
+name: up_viewport to return to a parent for the next region (vs pop_viewport to discard)
+applicable_to:
+  - grid_py.Viewport
+description: |
+  Multi-region layouts (a heatmap body plus sibling annotation tracks, a plot
+  panel plus its axes) are drawn by pushing one child viewport, drawing into
+  it, and then **navigating back up to the parent** so the next sibling can be
+  pushed from the same coordinate frame.
+
+  Use `up_viewport(n=1)` for that "return to parent" step, NOT `pop_viewport()`:
+
+    * `up_viewport()` *navigates* up n levels. The child viewport STAYS in the
+      viewport tree — you can `down_viewport(name)` / `seek_viewport(name)` back
+      into it later (e.g. to decorate it). It returns the `VpPath` you came from.
+    * `pop_viewport(n)` *removes* n viewports from the stack — they are discarded
+      and can no longer be re-entered.
+
+  Real consumers draw region-by-region with `up_viewport()` and essentially
+  never `pop_viewport()`: ComplexHeatmap's renderer uses `up_viewport()` after
+  every slice and after the body/main viewports (`# pop slice_vp` comments mark
+  the `up_viewport()` calls), and `pop_viewport()` not at all — because the
+  retained tree is what lets `decorate_*()` seek back into a named region.
+code_template: |
+  from grid_py import (
+      CairoRenderer, get_state, grid_newpage,
+      Viewport, Unit, gpar,
+      push_viewport, up_viewport, current_viewport,
+      grid_rect, grid_text,
+  )
+  get_state().init_device(CairoRenderer(width=4, height=4, dpi=150, bg="white"))
+  grid_newpage()
+
+  # Parent region that all sibling tracks are positioned within.
+  push_viewport(Viewport(name="layout"))
+
+  # --- Region 1: the body (left 70%) ---
+  push_viewport(Viewport(
+      x=Unit(0.0, "npc"), width=Unit(0.7, "npc"),
+      just=("left", "centre"), name="body",
+  ))
+  grid_rect(gp=gpar(fill="lightblue", col="black"))
+  grid_text("body")
+  up_viewport()  # return to "layout" — body stays in the tree, re-enterable
+
+  # --- Region 2: a sibling annotation track (right 30%) ---
+  push_viewport(Viewport(
+      x=Unit(0.7, "npc"), width=Unit(0.3, "npc"),
+      just=("left", "centre"), name="annotation",
+  ))
+  grid_rect(gp=gpar(fill="wheat", col="black"))
+  grid_text("anno")
+  up_viewport()  # back to "layout"; the next sibling could be pushed here
+
+  assert current_viewport().name == "layout"
+  get_state().get_renderer().write_to_png("/tmp/up_vs_pop_viewport.png")
+anti_pattern_paired: null
+typical_use_case: "lay out a body region plus sibling annotation/axis tracks, returning to the shared parent between regions"

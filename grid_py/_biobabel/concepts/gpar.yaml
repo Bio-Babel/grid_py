@@ -1,0 +1,61 @@
+id: grid_py.Gpar
+name: Gpar (Graphical Parameters)
+category: rendering-context
+description: 'A bag of graphical parameters: stroke color (`col`), fill color (`fill`),
+
+  line width (`lwd`), line type (`lty`), font family/size, alpha, and more.
+
+  Set on a viewport, it applies to everything drawn beneath; set on a grob,
+
+  it applies to that grob only and overrides ancestors.
+
+
+  Construct with `gpar(col="red", fill="lightblue", lwd=2)`.
+
+
+  Gpar fields also accept length-N *vectors*. When a single grob draws N
+
+  elements (e.g. one `rect_grob` drawing N heatmap cells), each field is
+
+  recycled across the elements: `Gpar(fill=[c0, c1, ...])` paints element i with
+
+  color i, while a scalar like `col="white"` applies to all N. This is what
+
+  lets a heatmap body be one batched draw. Beyond color/line params, common
+
+  fields include `fontface` ("plain"/"bold"/"italic" or 1-4), `fontsize`,
+
+  `fontfamily`, and text-orientation handled at the grob (e.g. `text_grob(rot=)`,
+
+  `just=`).
+
+  '
+invariants:
+- Gpars on viewports are merged; child viewport gpar overrides parent.
+- Gpar on a grob overrides any inherited from the current viewport.
+- Unset gpar fields are not inherited from device defaults; they're sentinel-empty.
+- Gpar fields accept length-N vectors recycled across a multi-element grob's elements; scalars apply to all elements.
+mental_model: 'For R users:
+
+  Identical to R''s `gpar()`. Same field names, same semantics.
+
+
+  For Python users:
+
+  Think of it as a CSS-like cascade: viewports are scopes, grobs can shadow
+
+  fields. Unlike CSS, *unset* fields are not inherited from the device — they
+
+  fall through to grid_py''s hard-coded defaults.
+
+
+  A field can also be a list. A grob that draws many elements at once reads
+
+  one entry per element (recycling shorter lists), so `Gpar(fill=palette_list)`
+
+  is how one `rect_grob` ends up rendering a multi-colored grid — the
+
+  per-element styling lives in the Gpar, not in N separate grobs.'
+related_concepts:
+- grid_py.Viewport
+- grid_py.Grob

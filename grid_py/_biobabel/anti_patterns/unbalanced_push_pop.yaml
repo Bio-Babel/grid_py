@@ -1,0 +1,29 @@
+id: grid_py.unbalanced_push_pop
+name: Unbalanced push_viewport / pop_viewport
+applicable_to:
+  - grid_py.Viewport
+detection:
+  detector_id: rgrid.unbalanced
+  args:
+    push: push_viewport
+    pop: pop_viewport
+  static_only: true
+why_bad: |
+  Every `push_viewport` opens a new coordinate scope; `pop_viewport` closes
+  it. If counts don't match, the viewport stack stays dirty: subsequent
+  drawing inherits the wrong gpar / transform, downstream code that assumes
+  a fresh root viewport breaks, and the bug is far from where it was caused.
+
+  If the body between push and pop can raise, wrap in `try/finally` (idiom
+  `grid_py.try_finally_pop`) so the pop happens even on exception.
+correct_pattern: grid_py.try_finally_pop
+code_example_wrong: |
+  push_viewport(vp)
+  grid_rect()
+  # ... forgot pop_viewport()
+code_example_right: |
+  push_viewport(vp)
+  try:
+      grid_rect()
+  finally:
+      pop_viewport()

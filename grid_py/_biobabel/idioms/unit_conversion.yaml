@@ -1,0 +1,60 @@
+id: grid_py.unit_conversion
+name: Resolve a Unit to a physical number for layout decisions
+applicable_to:
+  - grid_py.Unit
+  - grid_py.Grob
+description: |
+  A `Unit` is symbolic — `Unit(0.5, "npc")` or `Unit(1, "grobwidth", data=g)`
+  has no concrete size until it is resolved against a device. To *decide* a
+  layout (how many inches the figure needs, whether a label track fits, what
+  legend width in mm to reserve) you need a plain number, not a Unit.
+
+  `convert_width(u, unitTo, valueOnly=True)` (and `convert_height`,
+  `convert_x`, `convert_y`, and the general `convert_unit`) resolve `u` against
+  the current device/viewport and, with `valueOnly=True`, hand back a
+  float / NumPy array instead of a new Unit. This is THE primitive real
+  consumers branch on:
+
+    - pheatmap measures gtable cells in `"bigpts"` to lay out the grid, and the
+      final figure height in `"in"` to size the device.
+    - ComplexHeatmap converts dozens of component sizes to `"mm"` to pack the
+      heatmap list, annotations, and legends.
+    - patchwork converts panel widths/heights to nudge aspect ratios.
+
+  Because the value is resolved against the *active* device, a Unit-resolving
+  conversion needs a device open (the preamble below). `unitTo` accepts the
+  usual physical names — `"mm"`, `"cm"`, `"in"`/`"inches"`, `"bigpts"`,
+  `"points"` — as well as `"npc"` to renormalize back into the parent.
+code_template: |
+  from grid_py import (
+      CairoRenderer, get_state, grid_newpage, Unit,
+      convert_width, convert_height, convert_unit,
+  )
+
+  # Unit-resolving conversions read the active device, so open one first.
+  get_state().init_device(CairoRenderer(width=4, height=4, dpi=150, bg="white"))
+  grid_newpage()
+
+  # --- 1. Measure component sizes as plain physical numbers -------------
+  # valueOnly=True returns a NumPy array; take the scalar with float(x[0]).
+  # A legend column we want to reserve, expressed in npc of the page.
+  legend = Unit(0.18, "npc")
+  legend_mm = float(convert_width(legend, "mm", valueOnly=True)[0])
+  legend_in = float(convert_width(legend, "in", valueOnly=True)[0])
+  body_bigpts = float(convert_width(Unit(0.7, "npc"), "bigpts", valueOnly=True)[0])
+  fig_height_in = float(convert_height(Unit(1, "npc"), "in", valueOnly=True)[0])
+
+  # convert_unit is the general form (cm -> mm here, value only).
+  gap_mm = float(convert_unit(Unit(0.4, "cm"), "mm", valueOnly=True)[0])
+
+  # --- 2. Branch on the measured size to decide the layout --------------
+  # e.g. only draw an external legend if there is room for >= 8 mm of it.
+  draw_external_legend = legend_mm >= 8.0
+  # Pick a device size from the resolved figure height.
+  device_inches = round(fig_height_in + 0.5, 2)
+
+  print("legend mm/in:", legend_mm, legend_in)
+  print("body bigpts:", body_bigpts, "gap mm:", gap_mm)
+  print("external legend:", draw_external_legend, "device in:", device_inches)
+anti_pattern_paired: null
+typical_use_case: "deciding a figure/legend/track layout from a measured Unit size (pheatmap, ComplexHeatmap, patchwork)"

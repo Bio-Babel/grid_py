@@ -1,0 +1,21 @@
+id: grid_py.try_finally_pop
+name: try/finally to balance push and pop
+applicable_to:
+  - grid_py.Viewport
+description: |
+  When the body between push and pop can raise, balance the stack with
+  `try/finally` so that an exception doesn't leave the viewport stack
+  corrupted for the rest of the session.
+code_template: |
+  from grid_py import Viewport, Unit, push_viewport, pop_viewport, grid_rect
+
+  vp = Viewport(x=Unit(0.5, "npc"), y=Unit(0.5, "npc"),
+                width=Unit(0.4, "npc"), height=Unit(0.4, "npc"))
+  push_viewport(vp)
+  try:
+      grid_rect()
+      # ... anything else that might raise
+  finally:
+      pop_viewport()
+anti_pattern_paired: grid_py.unbalanced_push_pop
+typical_use_case: "any drawing block that calls into user code or third-party libs"

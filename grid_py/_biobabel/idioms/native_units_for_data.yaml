@@ -1,0 +1,38 @@
+id: grid_py.native_units_for_data
+name: Use 'native' units when placing data points
+applicable_to:
+  - grid_py.Unit
+description: |
+  When drawing data (scatter points, lines through observations, threshold
+  lines at concrete values), the viewport's `xscale` / `yscale` give you the
+  data coordinate system. Use `Unit(value, "native")` so that the value is
+  interpreted in data coords; this is what survives axis changes.
+
+  Using `"npc"` for data is the canonical anti-pattern (see
+  `grid_py.npc_units_for_data`) — it breaks the moment you change the axis
+  range or add a legend.
+code_template: |
+  from grid_py import Viewport, Unit, gpar, push_viewport, pop_viewport, grid_points, grid_lines
+
+  # A viewport whose 'native' x is [0, 10] and y is [0, 1]
+  vp = Viewport(
+      xscale=(0, 10),
+      yscale=(0, 1),
+      width=Unit(0.8, "npc"),
+      height=Unit(0.8, "npc"),
+  )
+  push_viewport(vp)
+  grid_points(
+      x=Unit(xs, "native"),
+      y=Unit(ys, "native"),
+      gp=gpar(col="navy"),
+  )
+  # Threshold line at y=0.5 in data coordinates
+  grid_lines(
+      x=Unit([0, 10], "native"),
+      y=Unit([0.5, 0.5], "native"),
+      gp=gpar(col="red", lwd=2, lty="dashed"),
+  )
+  pop_viewport()
+anti_pattern_paired: grid_py.npc_units_for_data
+typical_use_case: "scatter / line plots where x and y are in data units"

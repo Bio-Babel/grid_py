@@ -1,0 +1,25 @@
+id: grid_py.build_grobtree
+name: Build a grob tree, draw it once
+applicable_to:
+  - grid_py.Grob
+description: |
+  For N visual elements of the same kind, build a list of grobs first and
+  wrap with `grob_tree(*grobs)` before drawing. This collapses N device
+  draws into one, and the resulting GTree is a value you can pass around,
+  test, or render twice with different graphics contexts.
+code_template: |
+  from grid_py import rect_grob, grob_tree, grid_draw, Unit, gpar
+
+  rects = [
+      rect_grob(
+          x=Unit(i / 10 + 0.05, "npc"),
+          y=Unit(0.5, "npc"),
+          width=Unit(0.08, "npc"),
+          height=Unit(0.3, "npc"),
+          gp=gpar(fill="lightblue"),
+      )
+      for i in range(10)
+  ]
+  grid_draw(grob_tree(*rects))
+anti_pattern_paired: grid_py.grob_in_loop
+typical_use_case: "drawing many similar shapes (bar charts, dot strips, lattices)"

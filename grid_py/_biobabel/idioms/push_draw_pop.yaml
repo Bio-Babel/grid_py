@@ -1,0 +1,32 @@
+id: grid_py.push_draw_pop
+name: Push-Draw-Pop (with try/finally to balance the stack)
+applicable_to:
+  - grid_py.Viewport
+description: |
+  The canonical way to draw inside a sub-region. Push a viewport that defines
+  the region, emit grobs (built or via grid_*), pop the viewport. Anything
+  drawn between push and pop is clipped/transformed into the sub-region.
+
+  **Always wrap the body in `try/finally`** so an exception inside the drawing
+  block does NOT leave the viewport stack unbalanced for the rest of the
+  session. This is the same pattern as `idiom grid_py.try_finally_pop`.
+code_template: |
+  from grid_py import (
+      Viewport, Unit, gpar,
+      push_viewport, pop_viewport,
+      grid_rect, grid_text,
+  )
+
+  push_viewport(Viewport(
+      x=Unit(0.5, "npc"),
+      y=Unit(0.5, "npc"),
+      width=Unit(0.4, "npc"),
+      height=Unit(0.4, "npc"),
+  ))
+  try:
+      grid_rect(gp=gpar(fill="lightblue"))
+      grid_text("Inside sub-vp")
+  finally:
+      pop_viewport()
+anti_pattern_paired: grid_py.unbalanced_push_pop
+typical_use_case: "draw a subplot/legend block in a specific region of the device"

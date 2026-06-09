@@ -1,0 +1,47 @@
+id: grid_py.scatter_with_thresholds
+name: Scatter plot with manual threshold lines
+applicable_to:
+  - grid_py.Viewport
+  - grid_py.Grob
+description: |
+  A canonical end-to-end pattern: scatter of (x, y) in a data viewport with
+  hand-rolled axes and horizontal/vertical threshold lines. Useful for
+  volcano plots, GO scatters, and any "x-y with cutoffs" figure where the
+  package author wants full grid control.
+code_template: |
+  import numpy as np
+  from grid_py import (
+      Viewport, GridLayout, Unit, gpar,
+      push_viewport, pop_viewport,
+      rect_grob, grid_points, grid_lines, grid_text,
+      grid_xaxis, grid_yaxis,
+      grob_tree, grid_draw,
+  )
+
+  rng = np.random.default_rng(0)
+  x = rng.normal(loc=0, scale=1, size=200)
+  y = -np.log10(rng.uniform(1e-6, 1, size=200))
+
+  plot_vp = Viewport(
+      xscale=(float(x.min()) - 0.5, float(x.max()) + 0.5),
+      yscale=(0, float(y.max()) + 0.5),
+      x=Unit(0.55, "npc"), y=Unit(0.55, "npc"),
+      width=Unit(0.78, "npc"), height=Unit(0.78, "npc"),
+  )
+  push_viewport(plot_vp)
+  try:
+      grid_points(
+          x=Unit(x.tolist(), "native"),
+          y=Unit(y.tolist(), "native"),
+          gp=gpar(col="grey40"),
+      )
+      grid_lines(
+          x=Unit([float(x.min()), float(x.max())], "native"),
+          y=Unit([1.3, 1.3], "native"),
+          gp=gpar(col="red", lwd=1.5, lty="dashed"),
+      )
+      grid_xaxis()
+      grid_yaxis()
+  finally:
+      pop_viewport()
+typical_use_case: "volcano plots, expression vs significance scatters, threshold-annotated XY"

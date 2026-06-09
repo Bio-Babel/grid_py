@@ -1,0 +1,50 @@
+id: grid_py.GridLayout
+name: GridLayout
+category: layout
+description: 'A row × column matrix layout attached to a viewport, sizing each cell with
+
+  Units (either fixed sizes like `Unit(2, "cm")` or relative like
+
+  `Unit(1, "null")` — the latter being the analogue of CSS `1fr`). Once a
+
+  viewport carries a layout, you can push child viewports addressed by cell
+
+  coordinates: `Viewport(layout_pos_row=i, layout_pos_col=j)`.
+
+
+  Cross-reference — assembling a full multi-region figure (matrix body +
+
+  annotation tracks + legend): the LOWER-level option is to drive raw viewports
+
+  yourself, pushing one child viewport per region and navigating back up between
+
+  them (see idiom `grid_py.up_vs_pop_viewport`). The HIGHER-level option is
+
+  **gtable** (`gtable_py.build_then_add_grob`) — assemble the grobs into a sized
+
+  table that tracks each cell''s row/column extent for you, which is what
+
+  ggplot2 / ComplexHeatmap use for their panel + axis + legend assembly.
+
+  '
+invariants:
+- Sum of `null`-unit cells determines fractional sharing of leftover space.
+- Pushed child viewports addressed by layout coords ignore their own x/y/width/height.
+- Layout cell indexing in grid_py is 1-based, matching R.
+mental_model: 'For R users:
+
+  Identical to R `grid.layout(nrow, ncol, widths, heights)`. Cells are
+
+  addressed via `viewport(layout.pos.row=i, layout.pos.col=j)`.
+
+
+  For Python users:
+
+  The closest analogue is matplotlib''s `GridSpec`, but with grid''s unit system
+
+  so you can mix fixed-size and proportional cells (e.g. a 2-cm legend on the
+
+  right plus a flex panel on the left).'
+related_concepts:
+- grid_py.Viewport
+- grid_py.Unit

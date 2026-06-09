@@ -1,0 +1,49 @@
+id: grid_py.Renderer
+name: Renderer / Device
+category: output
+description: 'The output target that turns drawn grobs into pixels (or vector commands).
+
+  grid_py ships two: `CairoRenderer` (raster PNG / vector PDF/SVG/PS via
+
+  pycairo) and `WebRenderer` (HTML5 canvas / SVG output).
+
+
+  A renderer must be *bound* to the global drawing state before any `grid_draw`
+
+  call has somewhere to land. The bind step is `get_state().init_device(renderer)`.
+
+  Without it, drawing calls silently no-op or fail.
+
+
+  Every executable template in this contract starts with the same three-line preamble; it
+
+  is canonical, not optional.
+
+  '
+invariants:
+- A renderer must be bound via `get_state().init_device(renderer)` before any `grid_draw` succeeds.
+- '`grid_newpage()` clears the current page but preserves the bound renderer; call it before each fresh figure.'
+- Raster renderers (CairoRenderer with `surface_type='image'`) finalize via `renderer.write_to_png(path)` or `renderer.to_png_bytes()`.
+- Vector renderers (CairoRenderer with `surface_type='pdf'`/`'svg'`/`'ps'`) require `filename=` at construction and finish when the renderer is garbage collected (or via explicit context-manager use).
+- Switching renderers mid-session requires another `init_device(new_renderer)` call; the old renderer is detached.
+mental_model: 'For R users:
+
+  R grid implicitly uses the current device (`pdf()`/`png()`/`dev.new()`).
+
+  grid_py is explicit: you construct a renderer and bind it. Less magic,
+
+  more verbose.
+
+
+  For Python users:
+
+  The renderer is the side-effect channel. Constructing one doesn''t draw;
+
+  binding it tells grid_py where subsequent draws land. Closest analogue is
+
+  matplotlib''s `Figure` + `FigureCanvas` separation, but here the binding
+
+  is global (via `get_state()`).'
+related_concepts:
+- grid_py.Viewport
+- grid_py.Grob

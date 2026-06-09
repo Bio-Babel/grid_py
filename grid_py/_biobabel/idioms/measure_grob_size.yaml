@@ -1,0 +1,63 @@
+id: grid_py.measure_grob_size
+name: Measure a string or grob to size a region around it
+applicable_to:
+  - grid_py.Unit
+  - grid_py.Grob
+description: |
+  To reserve exactly enough space for a label, an axis-title track, or an
+  annotation, size the region from the *natural* size of the thing that goes in
+  it rather than guessing a constant. grid_py exposes these measurements as
+  PUBLIC, top-level names:
+
+    - `string_width("label")` / `string_height("label")` — the rendered size of
+      a string under the current font.
+    - `width_details(grob)` / `height_details(grob)` — the natural size of an
+      arbitrary grob (a text grob, a composite, etc.). ComplexHeatmap uses
+      `grob.width_details()` / `height_details()` to size its label tracks.
+    - `Unit(1, "grobwidth", data=grob)` / `Unit(1, "grobheight", data=grob)` —
+      a *symbolic* Unit that resolves to the grob's natural width/height at
+      draw time. Carry it straight into a layout's `widths` / `heights` so the
+      track auto-fits the grob (ComplexHeatmap's row/column label tracks). This
+      is preferable to baking in a number, because it re-resolves if the font
+      or grob content changes.
+
+  Do NOT import these from `grid_py._size` / `grid_py._units` — those are
+  private. Use the public top-level names shown here.
+
+  All of these resolve against the active device, so a device must be open
+  (the preamble below).
+code_template: |
+  from grid_py import (
+      CairoRenderer, get_state, grid_newpage, Unit, gpar, text_grob,
+      string_width, string_height, width_details, height_details,
+      convert_width, convert_height, unit_c,
+  )
+
+  get_state().init_device(CairoRenderer(width=4, height=4, dpi=150, bg="white"))
+  grid_newpage()
+
+  # valueOnly=True returns a NumPy array; take the scalar with float(x[0]).
+  # --- 1. Size a track from a bare string -------------------------------
+  longest_row_label = "CD8+ cytotoxic T cell"
+  sw = string_width(longest_row_label)
+  sh = string_height("Ag")
+  print("label width mm:", float(convert_width(sw, "mm", valueOnly=True)[0]))
+  print("label height mm:", float(convert_height(sh, "mm", valueOnly=True)[0]))
+
+  # --- 2. Measure an arbitrary grob's natural size ----------------------
+  title = text_grob("Gene expression (log2)", gp=gpar(fontsize=10))
+  title_w = width_details(title)
+  title_h = height_details(title)
+  print("title natural mm:",
+        float(convert_width(title_w, "mm", valueOnly=True)[0]),
+        float(convert_height(title_h, "mm", valueOnly=True)[0]))
+
+  # --- 3. Auto-fit a layout track to the grob (symbolic, draw-time) -----
+  # A label track sized to the title grob + a relative body column.
+  label_track = Unit(1, "grobwidth", data=title)
+  widths = unit_c(label_track, Unit(1, "npc"))
+  # The track resolves to the grob's natural width when drawn.
+  print("track resolves to mm:",
+        float(convert_width(widths[0], "mm", valueOnly=True)[0]))
+anti_pattern_paired: null
+typical_use_case: "auto-fitting label / title tracks to their content (ComplexHeatmap label tracks, axis-title sizing)"

@@ -1,0 +1,15 @@
+id: grid_py.grob_into_viewport
+description: |
+  A Grob (leaf or GTree) is rendered into the *current* viewport when
+  `grid_draw(grob)` is called. The grob's units are resolved against that
+  viewport: `Unit(0.5, "npc")` means "half of the current viewport," not
+  "half of the device."
+parent: grid_py.Viewport
+child: grid_py.Grob
+constraints:
+  - "Push the desired viewport before grid_draw, pop after."
+  - "Use `native` units in the grob if the viewport carries xscale/yscale."
+  - "Gpars set on the viewport are merged with the grob's gpar at draw time."
+typical_errors:
+  - "Drawing a grob with `npc` units expecting them to be device-relative."
+  - "Forgetting to set xscale/yscale on a viewport before drawing a `native`-unit grob."

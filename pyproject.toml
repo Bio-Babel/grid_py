@@ -64,6 +64,21 @@ Repository    = "https://github.com/Bio-Babel/grid_py"
 Issues        = "https://github.com/Bio-Babel/grid_py/issues"
 Documentation = "https://github.com/Bio-Babel/grid_py#readme"
 
+[project.entry-points."biobabel.manifest"]
+grid_py = "grid_py._biobabel:get_manifest"
+
+[project.entry-points."biobabel.detectors"]
+# AST detectors for grid_py's anti-patterns. Referenced by detector_id
+# from grid_py/_biobabel/anti_patterns/*.yaml. Per ADR-0008 (biobabel
+# schema v2), detector implementations live with the package that owns
+# the domain knowledge, not in biobabel core.
+"rgrid.for_loop_calls" = "grid_py._biobabel.detectors:for_loop_calls"
+"rgrid.unbalanced"     = "grid_py._biobabel.detectors:unbalanced"
+"rgrid.unit_kw"        = "grid_py._biobabel.detectors:unit_kw"
+
+[tool.biobabel]
+contract_class = "grammar"
+
 [tool.hatch.build.targets.wheel]
 # Only the importable package goes into the wheel; no tutorials, docs, tests.
 packages = ["grid_py"]

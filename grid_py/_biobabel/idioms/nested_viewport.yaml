@@ -1,0 +1,30 @@
+id: grid_py.nested_viewport
+name: Nested viewports for multi-panel layouts
+applicable_to:
+  - grid_py.Viewport
+  - grid_py.GridLayout
+description: |
+  For an N×M panel grid, push a parent viewport with a GridLayout, then push
+  child viewports addressed by layout_pos_row / layout_pos_col. Pop each
+  child after its panel is drawn; pop the parent at the very end.
+code_template: |
+  from grid_py import (
+      Viewport, GridLayout, Unit,
+      push_viewport, pop_viewport,
+      grid_rect, grid_text, gpar,
+  )
+
+  parent = Viewport(layout=GridLayout(nrow=2, ncol=2))
+  push_viewport(parent)
+  try:
+      for row in (1, 2):
+          for col in (1, 2):
+              push_viewport(Viewport(layout_pos_row=row, layout_pos_col=col))
+              try:
+                  grid_rect(gp=gpar(fill="white", col="black"))
+                  grid_text(f"panel {row},{col}")
+              finally:
+                  pop_viewport()
+  finally:
+      pop_viewport()
+typical_use_case: "2×2 (or N×M) faceted figures with independent axes per panel"

@@ -1,0 +1,60 @@
+id: grid_py.grob_in_loop
+name: Building and drawing grobs inside a tight loop
+applicable_to:
+  - grid_py.Grob
+detection:
+  detector_id: rgrid.for_loop_calls
+  args:
+    calls:
+      - rect_grob
+      - text_grob
+      - line_to_grob
+      - move_to_grob
+      - circle_grob
+      - polygon_grob
+      - polyline_grob
+      - points_grob
+      - lines_grob
+      - segments_grob
+      - arrows_grob
+      - roundrect_grob
+      - raster_grob
+      - curve_grob
+      - xspline_grob
+      - bezier_grob
+      - path_grob
+      - null_grob
+      - function_grob
+      - grid_rect
+      - grid_text
+      - grid_circle
+      - grid_lines
+      - grid_polygon
+      - grid_points
+      - grid_segments
+      - grid_arrows
+      - grid_roundrect
+      - grid_raster
+      - grid_curve
+      - grid_xspline
+      - grid_bezier
+      - grid_path
+      - grid_polyline
+    unless_calls:
+      - push_viewport
+  static_only: true
+why_bad: |
+  Each `grid_draw` (and each immediate-mode `grid_*` call) flushes to the
+  device. Drawing N shapes one at a time costs N device round-trips, which
+  scales linearly with shape count and dominates render time. Build all
+  grobs first, wrap with `grob_tree(*grobs)`, draw once.
+correct_pattern: grid_py.build_grobtree
+code_example_wrong: |
+  for i in range(100):
+      grid_draw(rect_grob(x=Unit(i * 0.01, "npc")))
+code_example_right: |
+  rects = [
+      rect_grob(x=Unit(i * 0.01, "npc"))
+      for i in range(100)
+  ]
+  grid_draw(grob_tree(*rects))

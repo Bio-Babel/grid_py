@@ -1,0 +1,68 @@
+schema_version: 1
+repo: https://github.com/Bio-Babel/rgrid-python
+distribution: rgrid-python
+import_name: grid_py
+display_name: grid_py (rgrid-python) — R grid graphics port
+contract_class: grammar
+tier: 1
+maturity: beta
+r_package:
+  package: grid
+  repo: R-base
+  version_or_commit: 4.5.3
+  fidelity: full
+capabilities:
+- viewport-stack
+- grob-tree
+- units-and-coordinates
+- layered-rendering
+- low-level-graphics
+domain_tags:
+- visualization
+- low-level-graphics
+task_tags:
+- new-plotting-package
+- sub-region-drawing
+- multi-panel-layout
+- custom-axes
+- coordinate-transforms
+foundation: []
+triggers:
+- build a plotting package on top of grid
+- draw in a specific sub-region of the device
+- use Unit, Viewport, grob, gpar
+- port an R grid-based package to Python
+not_when:
+- user just wants a one-line plot (use ggplot2_py or matplotlib instead)
+- user only needs a heatmap (use pheatmap or ComplexHeatmap)
+templates:
+- id: grid_py.basic_subplot
+  path: templates/basic_subplot.py
+  task_tags:
+  - sub-region-drawing
+  description: Draw a rectangle and a text label inside a centered sub-viewport.
+  parameters: []
+  code_template: ''
+  expected_artifacts:
+  - basic_subplot.png
+  notes: []
+- id: grid_py.scatter_with_thresholds
+  path: templates/scatter_with_thresholds.py
+  task_tags:
+  - custom-axes
+  description: Scatter plot with manual axes and threshold lines via grid primitives.
+  parameters: []
+  code_template: ''
+  expected_artifacts:
+  - scatter_with_thresholds.png
+  notes: []
+- id: grid_py.multi_panel_layout
+  path: templates/multi_panel_layout.py
+  task_tags:
+  - multi-panel-layout
+  description: GridLayout-based 2×2 multi-panel figure.
+  parameters: []
+  code_template: ''
+  expected_artifacts:
+  - multi_panel.png
+  notes: []

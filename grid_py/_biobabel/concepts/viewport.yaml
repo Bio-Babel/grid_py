@@ -1,0 +1,79 @@
+id: grid_py.Viewport
+name: Viewport
+category: drawing-context
+description: 'A rectangular region on the graphics device with its own coordinate system.
+
+  Viewports nest into a stack/tree. The "current" viewport (top of the stack)
+
+  determines how every `Unit("npc", ...)` value is resolved and what the
+
+  rendering target rectangle is. Pushing a child viewport saves the current
+
+  graphical context; popping restores it.
+
+  '
+invariants:
+- push_viewport and pop_viewport must balance over a draw session.
+- Unit(0.5, 'npc') means 'half of the *current* viewport's width/height', not the device's.
+- Child viewport coordinates are expressed relative to the parent.
+- gpar() set on a viewport is merged into the gpar of grobs drawn beneath it.
+- up_viewport(n) NAVIGATES up n levels and RETAINS the tree (the child can be re-entered); pop_viewport(n) REMOVES n viewports and discards them.
+- 'A named viewport (Viewport(name=''body'')) is addressable for the rest of the session: seek_viewport(''body'') searches the whole retained tree and re-enters it.'
+- just=('left','top') / just=(0,0) anchors the viewport's reference point; clip='on'|'off'|'inherit' controls clipping to the viewport rectangle.
+mental_model: 'For R users:
+
+  Same semantics as R `grid::viewport`. `pushViewport()` → `push_viewport()`,
+
+  `popViewport()` → `pop_viewport()`, `downViewport()` → `down_viewport()`.
+
+
+  For Python users:
+
+  Think of it as a context manager for a stack-based coordinate transform.
+
+  Each `Viewport(x, y, width, height)` defines a clip+translate+scale that
+
+  gets pushed onto a stack; everything drawn while it is on top is mapped
+
+  into that rectangle.
+
+
+  General:
+
+  The viewport stack is the *only* mechanism for sub-region drawing in grid_py;
+
+  there is no implicit "axis transform" — you compose coordinate systems by
+
+  nesting viewports.
+
+
+  Navigation vs teardown is the distinction most callers miss. To draw a body
+
+  region and then a sibling annotation track, you DON''T pop the body — you
+
+  `up_viewport()` back to the shared parent (the body stays in the tree) and
+
+  push the sibling from there. `pop_viewport()` actually discards, so a region
+
+  you popped can no longer be re-entered. Production renderers
+
+  (ComplexHeatmap) therefore use `up_viewport()` exclusively per slice/region
+
+  and never `pop_viewport()`.
+
+
+  Naming a viewport makes a region re-enterable for the whole session.
+
+  Construct it as `Viewport(name=''body'')`, and later `seek_viewport(''body'')`
+
+  (whole-tree search) or `down_viewport(''body'')` (search below the current
+
+  node) jumps back into it — the basis of the "decorate an already-drawn
+
+  region" pattern. `current_viewport()` reads where you currently are
+
+  (`.name`), so you can remember it and seek back afterward.'
+related_concepts:
+- grid_py.Unit
+- grid_py.Gpar
+- grid_py.GridLayout

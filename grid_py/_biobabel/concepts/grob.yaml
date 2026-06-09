@@ -1,0 +1,91 @@
+id: grid_py.Grob
+name: Grob (Graphical Object)
+category: scene-graph
+description: 'A renderable description of a visual element — a rectangle, text, polygon,
+
+  line — that is *built* by a factory (`rect_grob`, `text_grob`, ...) and
+
+  *drawn* by `grid_draw`. Grobs are inert data; constructing one has no side
+
+  effect on the device. This is the central difference from immediate-mode
+
+  helpers like `grid_rect()` (which both builds and draws).
+
+
+  A `GTree` is a Grob whose payload is a list of child grobs (`grob_tree(*grobs)`).
+
+  Trees compose: you can put a tree inside another tree. `grob_tree(*grobs)` is
+
+  the convenience factory; `GTree(children=GList(*grobs), name=..., gp=..., vp=...)`
+
+  is the explicit container constructor — `GList(*grobs)` is the typed child
+
+  collection it wraps. Reach for the explicit `GTree(children=GList(...))` form
+
+  when you need to set `name`/`gp`/`vp` on the container or subclass it.
+
+
+  A grob''s children can also be produced *lazily at render time* via the
+
+  `make_content` hook. On both `Grob` and `GTree`, `grid_draw` invokes
+
+  `make_content(self)` while the target viewport is current; a `GTree` subclass
+
+  overrides it to build children that depend on device metrics and installs them
+
+  with `self.set_children(GList(...))`. This is the ggrepel deferred-grob
+
+  pattern. (`get_children()` reads them back; `draw_details()` is the low-level
+
+  render hook the dispatch calls.)
+
+  '
+invariants:
+- Constructing a grob does not draw anything; it returns a value.
+- Each grid_draw(grob) on a leaf grob results in (roughly) one device draw call.
+- Drawing a GTree results in one batched draw — the optimization.
+- Grobs are immutable in the user-facing API; edit by creating a new grob (or via `edit_grob`).
+- GTree(children=GList(*grobs)) is the explicit container; grob_tree(*grobs) is the shorthand for the same thing.
+- make_content(self) runs at render time (device + current viewport available); a GTree subclass overrides it and calls self.set_children(GList(...)) to build children lazily.
+mental_model: 'For R users:
+
+  Same as R: `rectGrob()`, `textGrob()`, `gTree()`. The naming convention
+
+  drops the camelCase and dots — R `rectGrob()` → Python `rect_grob()`,
+
+  R `grid.rect()` → Python `grid_rect()`.
+
+
+  For Python users:
+
+  Think of a Grob as a frozen dataclass describing "what to draw," not "draw
+
+  this now." `rect_grob(...)` is the constructor; `grid_draw(g)` is what
+
+  actually touches the canvas. This separation is what enables you to
+
+  assemble a `grob_tree(...)` first and pay for rendering exactly once.
+
+
+  General:
+
+  The whole "build a tree, draw the tree" idiom (the build-then-draw pattern)
+
+  is *only* available because grobs and drawing are decoupled.
+
+
+  That same decoupling enables the inverse — *deferring* construction to render
+
+  time. A `GTree` subclass that overrides `make_content` builds nothing in its
+
+  constructor; the children are assembled (and `set_children(GList(...))` is
+
+  called) only when `grid_draw` reaches it, by which point device font metrics
+
+  (`string_width`, `convert_width`) are queryable. ggrepel needs exactly this:
+
+  it cannot place a label until it can measure the label.'
+related_concepts:
+- grid_py.Viewport
+- grid_py.Gpar
+- grid_py.Unit

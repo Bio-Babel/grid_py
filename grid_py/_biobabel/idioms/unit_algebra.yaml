@@ -1,0 +1,72 @@
+id: grid_py.unit_algebra
+name: Assemble and compute layout sizes with Unit algebra
+applicable_to:
+  - grid_py.Unit
+  - grid_py.GridLayout
+description: |
+  Real layouts are built by *composing* heterogeneous sizes — a fixed-mm row
+  label track, an `npc`-relative body, a `grobwidth`-sized legend — into one
+  widths (or heights) vector that a layout/gtable resolves at draw time. The
+  Unit API gives you the algebra to do this without ever resolving to numbers
+  yourself:
+
+    - `unit_c(*units)` concatenates heterogeneous Units into one vector (the
+      mixed units are preserved per-element); this is how pheatmap and
+      patchwork build their `widths` / `heights`.
+    - Unit arithmetic resolves *lazily* at draw time and mixes unit kinds:
+      `Unit(1, "npc") - Unit(5, "mm")` (carve a fixed margin out of a relative
+      span — patchwork's aspect nudging), `Unit(2, "cm") * 3` (scale a size).
+    - A Unit supports indexing/slicing and returns a Unit: `widths[0]`,
+      `widths[1:]`.
+    - `unit_rep(u, each=n)` / `unit_rep(u, times=n)` build repeated tracks
+      (pheatmap's per-cell column/row grid).
+    - `unit_pmin(a, b)` takes the element-wise smaller Unit (clamp a track to a
+      cap); `is_unit(x)` guards "did I get a Unit or a bare number?".
+    - `grid_pretty(range)` returns nice tick values for an axis or legend
+      colorbar.
+
+  None of this needs a device — it is pure symbolic algebra. (Resolving it to
+  numbers later does; see `grid_py.unit_conversion`.)
+code_template: |
+  from grid_py import (
+      Unit, unit_c, unit_rep, unit_pmin, is_unit, unit_type, grid_pretty,
+  )
+
+  # --- 1. Assemble a heterogeneous widths vector ------------------------
+  # row-label track (fixed mm) | body (relative npc) | legend (fixed cm)
+  label_track = Unit(28, "mm")
+  body = Unit(1, "npc")
+  legend = Unit(1.2, "cm")
+  widths = unit_c(label_track, body, legend)
+  assert is_unit(widths) and len(widths) == 3
+  print("widths units:", unit_type(widths))     # ['mm', 'npc', 'cm']
+
+  # Indexing/slicing a Unit returns a Unit.
+  first = widths[0]
+  rest = widths[1:]
+  assert is_unit(first) and is_unit(rest) and len(rest) == 2
+
+  # --- 2. Compute sizes with heterogeneous arithmetic -------------------
+  # Carve a fixed 5mm gutter out of the relative body span (lazy at draw time).
+  body_minus_gutter = Unit(1, "npc") - Unit(5, "mm")
+  scaled_legend = Unit(1.2, "cm") * 3          # widen the legend track 3x
+  assert is_unit(body_minus_gutter) and is_unit(scaled_legend)
+
+  # Clamp the label track to a 40mm cap, element-wise.
+  capped_track = unit_pmin(label_track, Unit(40, "mm"))
+  assert is_unit(capped_track)
+
+  # --- 3. Repeat a track for a per-cell grid ----------------------------
+  n_cols = 6
+  cell_cols = unit_rep(Unit(1, "null"), each=n_cols)   # 6 equal body columns
+  assert len(cell_cols) == n_cols
+
+  # --- 4. Nice tick values for an axis / legend colorbar ----------------
+  ticks = grid_pretty((0.0, 97.3))
+  print("ticks:", list(ticks))
+
+  # A guard for "Unit or bare number?" before treating a value as symbolic.
+  for cand in (Unit(2, "cm"), 0.5):
+      print(cand, "is_unit:", is_unit(cand))
+anti_pattern_paired: null
+typical_use_case: "building widths/heights vectors and computing layout sizes (pheatmap grid, patchwork aspect nudging, legend ticks)"

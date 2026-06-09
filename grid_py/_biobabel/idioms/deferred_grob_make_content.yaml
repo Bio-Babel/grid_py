@@ -1,0 +1,62 @@
+id: grid_py.deferred_grob_make_content
+name: Subclass GTree and override make_content for render-time layout (device metrics)
+applicable_to:
+  - grid_py.Grob
+description: |
+  Some grobs cannot be built up-front because their layout depends on device
+  font metrics — the pixel width of a string, how many `npc`/`native` units a
+  label occupies — which only exist once there is a device and a current
+  viewport. The solution is a *deferred* grob: subclass `GTree`, leave it empty
+  at construction, and override `make_content(self)` to build the children AT
+  RENDER TIME and install them with `self.set_children(GList(...))`.
+
+  `grid_draw` calls `make_content()` while the target viewport is current, so
+  inside it `string_width(label)` and `convert_width(..., "npc"|"native")`
+  return real device measurements. This is exactly how ggrepel works:
+  `TextRepelTree(GTree)` overrides `make_content`, runs the label-repulsion
+  solver against converted coordinates, then `self.set_children(GList(*grobs))`
+  and `return self`.
+
+  Contract: build nothing in `__init__` (pass `children=None`); do all child
+  construction in `make_content`; finish with `set_children(GList(...))` and
+  `return self`. Constructing the tree stays side-effect-free — the device work
+  happens only when it is drawn.
+code_template: |
+  from grid_py import (
+      CairoRenderer, get_state, grid_newpage,
+      GTree, GList, Unit, gpar, text_grob, grid_draw,
+      string_width, convert_width,
+  )
+  get_state().init_device(CairoRenderer(width=4, height=4, dpi=150, bg="white"))
+  grid_newpage()
+
+  class StackedLabels(GTree):
+      """Stack labels right-aligned; needs string_width, so build at render time."""
+
+      def __init__(self, labels, name=None):
+          # Build NOTHING here: device metrics aren't available yet.
+          super().__init__(children=None, name=name, _grid_class="stackedlabels")
+          self.labels = list(labels)
+
+      def make_content(self):
+          grobs = []
+          y = 0.9
+          for lab in self.labels:
+              # Device metric, available now because a device + viewport exist.
+              w_npc = float(convert_width(string_width(lab), "npc", valueOnly=True)[0])
+              x = 0.95 - w_npc  # right-align using the measured width
+              grobs.append(text_grob(
+                  lab, x=Unit(x, "npc"), y=Unit(y, "npc"),
+                  just=("left", "centre"), gp=gpar(fontface="bold"),
+              ))
+              y -= 0.18
+          self.set_children(GList(*grobs))
+          return self
+
+  tree = StackedLabels(["short", "a longer label", "mid"])
+  assert len(tree.get_children()) == 0           # empty until drawn
+  grid_draw(tree)                                  # triggers make_content
+  assert len(tree.get_children()) == 3            # children built at render time
+  get_state().get_renderer().write_to_png("/tmp/deferred_grob_make_content.png")
+anti_pattern_paired: null
+typical_use_case: "labels/segments whose placement needs font metrics (ggrepel-style render-time layout)"

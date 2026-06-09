@@ -1,0 +1,92 @@
+id: grid_py.grob_toolkit
+name: Useful grob builders and helpers (spacers, rasters, connectors, copy-with-changes, measuring)
+applicable_to:
+  - grid_py.Grob
+description: |
+  Beyond the everyday `rect_grob` / `text_grob` factories, grid_py exposes a
+  handful of scattered grob builders and grob helpers that real consumers reach
+  for when assembling figures. All are PUBLIC, top-level `grid_py` names.
+
+  Builders:
+    - `null_grob(...)` — an INVISIBLE, zero-size grob. Use it as a spacer or
+      placeholder in an otherwise-empty layout cell (pheatmap / ComplexHeatmap
+      drop one into cells that have no annotation so the surrounding layout
+      still reserves the slot).
+    - `raster_grob(image, ...)` — embed a bitmap / NumPy array as a grob. This
+      is how a heatmap *body* is drawn: rasterize the matrix once and blit it,
+      rather than emitting one rect per cell.
+    - `curve_grob(x1, y1, x2, y2, curvature=..., ...)` — a single smooth curved
+      connector between two points (ggrepel leader lines from a label back to
+      its point).
+    - `xspline_grob(x, y, shape=..., open_=..., ...)` — an X-spline through
+      control points; smooth ribbons / alluvial flows (ggalluvial).
+
+  Helpers (grobs are IMMUTABLE — there is no in-place setter):
+    - `edit_grob(grob, **kwargs)` — returns a NEW grob that is a COPY with the
+      named fields changed (the original is untouched). `edit_viewport(vp,
+      **kwargs)` is the same for viewports (ggh4x edits both this way).
+    - `is_grob(x)` — a type guard, for layout code that accepts "grob or
+      something else" (patchwork / ComplexHeatmap branch on this).
+    - `grob_width(grob)` / `grob_height(grob)` — the grob's NATURAL size,
+      returned as a `Unit` you can feed straight into a layout's
+      `widths` / `heights` (use `convert_width`/`convert_height` to read a
+      number out).
+
+  A device must be open for the size/render calls (the preamble below).
+code_template: |
+  import numpy as np
+  from grid_py import (
+      CairoRenderer, get_state, grid_newpage,
+      Unit, gpar, Viewport,
+      null_grob, raster_grob, curve_grob, xspline_grob,
+      edit_grob, edit_viewport, is_grob, grob_width, grob_height,
+      rect_grob, text_grob, grob_tree, grid_draw,
+      convert_width, convert_height,
+  )
+
+  get_state().init_device(CairoRenderer(width=4, height=4, dpi=150, bg="white"))
+  grid_newpage()
+
+  # --- Builders --------------------------------------------------------
+  # 1. null_grob: an invisible spacer for an empty layout cell.
+  spacer = null_grob()
+  assert is_grob(spacer)
+
+  # 2. raster_grob: blit a bitmap / array (a heatmap body) as one grob.
+  body = raster_grob(
+      np.random.rand(8, 8),
+      x=Unit(0.5, "npc"), y=Unit(0.5, "npc"),
+      width=Unit(0.4, "npc"), height=Unit(0.4, "npc"),
+  )
+
+  # 3. curve_grob: a smooth curved connector (a leader line).
+  leader = curve_grob(x1=0.1, y1=0.1, x2=0.6, y2=0.8, curvature=0.4)
+
+  # 4. xspline_grob: an X-spline flow ribbon through control points.
+  flow = xspline_grob(
+      x=[0.1, 0.4, 0.7, 0.9], y=[0.2, 0.5, 0.5, 0.8],
+      shape=-0.5, open_=True,
+  )
+
+  # --- Helpers (grobs/viewports are immutable: edit -> NEW object) ------
+  base = rect_grob(width=Unit(0.3, "npc"), height=Unit(0.3, "npc"),
+                   gp=gpar(fill="lightblue"))
+  recolored = edit_grob(base, gp=gpar(fill="salmon"))   # a COPY
+  assert recolored is not base
+
+  vp = Viewport(name="cell")
+  vp_renamed = edit_viewport(vp, name="cell2")          # a COPY
+  assert vp_renamed is not vp and vp_renamed.name == "cell2"
+
+  # 5. grob_width / grob_height: a grob's natural size as a Unit.
+  title = text_grob("Gene expression", gp=gpar(fontsize=10))
+  gw, gh = grob_width(title), grob_height(title)
+  print("title natural mm:",
+        round(float(convert_width(gw, "mm", valueOnly=True)[0]), 1),
+        round(float(convert_height(gh, "mm", valueOnly=True)[0]), 1))
+
+  # Prove a few of these actually render.
+  grid_draw(grob_tree(body, leader, flow, recolored))
+  get_state().get_renderer().write_to_png("/tmp/grob_toolkit.png")
+anti_pattern_paired: null
+typical_use_case: "assembling figures from scattered grob builders/helpers: heatmap bodies (raster_grob), empty-cell spacers (null_grob), leader lines / flow ribbons (curve_grob / xspline_grob), immutable copy-with-changes (edit_grob / edit_viewport), and natural-size measuring (grob_width / grob_height)"

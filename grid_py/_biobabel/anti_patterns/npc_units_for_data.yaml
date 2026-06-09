@@ -1,0 +1,34 @@
+id: grid_py.npc_units_for_data
+name: Using "npc" units for data coordinates
+applicable_to:
+  - grid_py.Unit
+detection:
+  detector_id: rgrid.unit_kw
+  args:
+    bad_units: [npc, snpc]
+    data_hints: [df, data, values, obs]
+  static_only: true
+why_bad: |
+  `"npc"` resolves against the *current viewport*, not your data scale. If
+  you express data points as `Unit(x_value, "npc")`, the placement only
+  happens to be correct when your data range is exactly [0, 1] *and* the
+  viewport size doesn't change. The instant you adjust axis ranges, add a
+  legend region, or share the plot with someone whose viewport is laid out
+  differently, all points shift.
+
+  Use `Unit(value, "native")` and set the viewport's `xscale` / `yscale`
+  explicitly. That way the placement survives axis transforms, panel re-flow,
+  and re-rendering at a different device size.
+correct_pattern: grid_py.native_units_for_data
+code_example_wrong: |
+  grid_points(
+      x=Unit(df["x"].tolist(), "npc"),
+      y=Unit(df["y"].tolist(), "npc"),
+  )
+code_example_right: |
+  push_viewport(Viewport(xscale=(0, 10), yscale=(0, 1)))
+  grid_points(
+      x=Unit(df["x"].tolist(), "native"),
+      y=Unit(df["y"].tolist(), "native"),
+  )
+  pop_viewport()

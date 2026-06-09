@@ -1,0 +1,52 @@
+id: grid_py.vectorized_gpar_grid
+name: Draw N cells with one rect grob via a length-N recycled Gpar
+applicable_to:
+  - grid_py.Gpar
+  - grid_py.Grob
+description: |
+  A heatmap body is N×M colored cells, but you do NOT build N×M grobs. You build
+  ONE `rect_grob` (or `grid_rect`) whose positional arguments are length-N
+  vectors and whose `Gpar` carries length-N fields. `Gpar` recycles its fields
+  across the elements of a multi-element grob: `Gpar(fill=[c0, c1, ...])` paints
+  cell i with color i; scalar fields like `col="white"` are recycled to every
+  cell. The result is one batched device draw for the whole grid.
+
+  This is the ComplexHeatmap / pheatmap body pattern: ComplexHeatmap flattens
+  the per-slice color matrix into `all_fill` and draws the slice with a single
+  `grid_rect(x=all_x, y=all_y, ..., gp=Gpar(fill=all_fill))`; pheatmap builds
+  the body with `Gpar(fill=list(fill), col=border)`.
+
+  Give the vectors as `Unit` vectors (a `Unit` over a list) so all positions
+  share units; the `Gpar` vector length must match the number of cells.
+code_template: |
+  import numpy as np
+  from grid_py import (
+      CairoRenderer, get_state, grid_newpage,
+      Gpar, Unit, rect_grob, grid_draw,
+  )
+  get_state().init_device(CairoRenderer(width=4, height=4, dpi=150, bg="white"))
+  grid_newpage()
+
+  nrow, ncol = 3, 4
+  # A color per cell (a flattened nrow×ncol palette).
+  palette = ["#fee5d9", "#fcae91", "#fb6a4a", "#cb181d"]
+  values = np.arange(nrow * ncol) % len(palette)
+  fills = [palette[v] for v in values]
+
+  # Flattened cell centers, as Unit vectors sharing 'npc' units.
+  xs, ys = [], []
+  for r in range(nrow):
+      for c in range(ncol):
+          xs.append((c + 0.5) / ncol)
+          ys.append((r + 0.5) / nrow)
+
+  body = rect_grob(
+      x=Unit(xs, "npc"), y=Unit(ys, "npc"),
+      width=Unit(1.0 / ncol, "npc"), height=Unit(1.0 / nrow, "npc"),
+      just="centre",
+      gp=Gpar(fill=fills, col="white"),   # fill recycled per cell; col per cell
+  )
+  grid_draw(body)  # one grob, one batched draw -> the whole heatmap body
+  get_state().get_renderer().write_to_png("/tmp/vectorized_gpar_grid.png")
+anti_pattern_paired: null
+typical_use_case: "heatmap body / colored lattice — N cells in a single batched draw"

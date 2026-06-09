@@ -1,0 +1,33 @@
+id: grid_py.Unit
+name: Unit
+category: coordinates
+description: "A value (or vector of values) tagged with a unit kind that determines how it\nis resolved at draw-time. The most common unit kinds are:\n\n  - `\"npc\"`  — Normalized Parent Coordinates. 0 is the left/bottom of the\n                current viewport; 1 is the right/top.\n  - `\"native\"` — values in the viewport's data scale (set via the viewport's\n                 xscale / yscale).\n  - `\"cm\"`, `\"mm\"`, `\"inches\"`, `\"points\"` — physical units.\n  - `\"lines\"`, `\"char\"` — font-relative.\n  - `\"strwidth\"`, `\"strheight\"` — relative to the size of a given string.\n\nConstructed with `Unit(value, units)` — there is no lowercase `unit()`\nfactory in grid_py (this is the only API gap vs R grid).\n"
+invariants:
+- Unit is what `npc`/`native`/`cm`/... resolution depends on; pure numbers do NOT carry that info.
+- '`Unit(0.5, ''npc'')` is relative to the current viewport, not absolute.'
+- Use `native` (not `npc`) when expressing data coordinates inside a `data_viewport()`.
+- 'Vectors recycle: `Unit([1, 2, 3], ''cm'')` is fine; `Unit(1, [''cm'', ''in''])` recycles units.'
+- 'Unit arithmetic resolves lazily at draw time and may mix unit kinds: `Unit(1,''npc'') - Unit(5,''mm'')`, `Unit(2,''cm'') * 3` each return a Unit; nothing is resolved to a number until drawn against a device.'
+- '`convert_width/convert_height/convert_x/convert_y/convert_unit(u, unitTo, valueOnly=True)` resolve a Unit against the active device and return a plain float/array (not a Unit) — THE primitive for layout decisions (figure inches, legend mm, border-vs-no-border).'
+- '`Unit(1,''grobwidth'', data=grob)` / `Unit(1,''grobheight'', data=grob)` size a region to a grob''s natural width/height, resolved at draw time; `string_width`/`string_height` and `width_details`/`height_details` are the PUBLIC top-level measurement functions (not the private `grid_py._size` / `grid_py._units`).'
+- '`unit_c(*units)` concatenates heterogeneous Units into one vector (per-element units preserved); a Unit supports indexing/slicing and returns a Unit (`u[0]`, `u[1:]`).'
+mental_model: 'For R users:
+
+  Identical to R''s `unit()`. The only difference is calling Python''s `Unit(...)`
+
+  (class constructor) instead of R''s `unit(...)` (function).
+
+
+  For Python users:
+
+  A typed scalar/vector — like NumPy''s units packages or pint. Without
+
+  constructing a Unit you cannot specify "0.5 in npc"; passing `0.5` to a
+
+  grob factory will sometimes work (treated as `"npc"`) and sometimes fail.
+
+  Be explicit.'
+related_concepts:
+- grid_py.Viewport
+- grid_py.Gpar
+- grid_py.Grob

@@ -1,0 +1,35 @@
+id: grid_py.grob_carries_vp
+name: Attach a viewport to a grob and let grid_draw handle push/pop
+applicable_to:
+  - grid_py.Grob
+  - grid_py.Viewport
+description: |
+  Instead of `push_viewport(vp); grid_draw(g); pop_viewport()` (which requires
+  a `try/finally` for safety), set `vp=...` on the grob itself (`Grob(vp=...)`
+  or `edit_grob(g, vp=...)`). When `grid_draw` renders the grob, it
+  *transparently* pushes the vp, draws, and pops — no stack management.
+
+  This is the canonical pattern in production code: ggplot2-python uses it 3+
+  times for placing the panel grid, axes, and guide boxes inside their target
+  viewports without manual push/pop in the rendering hot path.
+code_template: |
+  from grid_py import (
+      Unit, Viewport, gpar, rect_grob, text_grob,
+      edit_grob, grob_tree, grid_draw,
+  )
+
+  # Build a grob, then attach a viewport that positions it.
+  body = grob_tree(
+      rect_grob(gp=gpar(fill="lightblue")),
+      text_grob("Inside sub-vp"),
+  )
+  body_in_subregion = edit_grob(body, vp=Viewport(
+      x=Unit(0.5, "npc"),
+      y=Unit(0.5, "npc"),
+      width=Unit(0.4, "npc"),
+      height=Unit(0.4, "npc"),
+  ))
+
+  # No manual push/pop — grid_draw handles it.
+  grid_draw(body_in_subregion)
+typical_use_case: "production rendering paths where you want the vp tied to the grob, not the call site"
