@@ -1,0 +1,52 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.grid_add.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.grid_add
+import_path: grid_py.grid_add
+kind: function
+signature: 'grid_add(grob: ''Grob'', gPath: ''Optional[Union[str, GPath]]'' = None,
+  strict: ''bool'' = False, grep: ''bool'' = False, global_: ''bool'' = False, allDevices:
+  ''bool'' = False, redraw: ''bool'' = True) -> ''None'''
+purpose: Add a grob to a gTree on the display list.
+description: Add a grob to a gTree on the display list.
+parameters:
+- name: grob
+  type: Grob
+  required: true
+  default: null
+- name: gPath
+  type: Optional[Union[str, GPath]]
+  required: false
+  default: null
+- name: strict
+  type: bool
+  required: false
+  default: false
+- name: grep
+  type: bool
+  required: false
+  default: false
+- name: global_
+  type: bool
+  required: false
+  default: false
+- name: allDevices
+  type: bool
+  required: false
+  default: false
+- name: redraw
+  type: bool
+  required: false
+  default: true
+mutates: ''
+returns: None
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

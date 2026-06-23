@@ -1,0 +1,33 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.GridGTreeCoords.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.GridGTreeCoords
+import_path: grid_py.GridGTreeCoords
+kind: class
+signature: 'GridGTreeCoords(coords_dict: "Union[Dict[str, Union[GridGrobCoords, ''GridGTreeCoords'']],
+  List[Union[GridGrobCoords, ''GridGTreeCoords'']], None]" = None, name: ''str'' =
+  ''gtreecoords'') -> ''None'''
+purpose: Container for coordinates of a gTree.
+description: Container for coordinates of a gTree.
+parameters:
+- name: coords_dict
+  type: Union[Dict[str, Union[GridGrobCoords, 'GridGTreeCoords']], List[Union[GridGrobCoords,
+    'GridGTreeCoords']], None]
+  required: false
+  default: null
+- name: name
+  type: str
+  required: false
+  default: gtreecoords
+mutates: ''
+returns: None
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

@@ -1,0 +1,26 @@
+# Hand-authored contract. The tier-1 generator only introspects classes and
+# functions, so this module-level constant — the sole public constant in
+# grid_py's __all__ — is maintained by hand and is not produced on regeneration.
+id: grid_py.PATH_SEP
+import_path: grid_py.PATH_SEP
+kind: constant
+signature: 'PATH_SEP: str = "::"'
+purpose: Separator ("::") joining the components of a grob path (GPath) or viewport path (VpPath).
+description: >-
+  The "::" string that delimits the components of a grob/viewport path. A GPath
+  or VpPath renders as its components joined by PATH_SEP (e.g. "my_tree::my_rect"
+  addresses the grob named "my_rect" under the gTree named "my_tree"), and the
+  path-string form accepted by down_viewport(name) and reported by grid_ls /
+  current_vp_path uses the same separator. Build or split path strings with
+  PATH_SEP rather than hard-coding "::".
+mutates: ''
+returns: ''
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related:
+- grid_py.GPath
+- grid_py.VpPath
+- grid_py.down_viewport
+- grid_py.current_vp_path

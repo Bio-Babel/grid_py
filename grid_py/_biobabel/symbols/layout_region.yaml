@@ -1,0 +1,48 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.layout_region.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.layout_region
+import_path: grid_py.layout_region
+kind: function
+signature: 'layout_region(layout: ''GridLayout'', row: ''Union[int, Sequence[int]]'',
+  col: ''Union[int, Sequence[int]]'', parent_w_px: ''Optional[float]'' = None, parent_h_px:
+  ''Optional[float]'' = None, dpi: ''float'' = 150.0) -> ''Dict[str, Unit]'''
+purpose: Compute the region occupied by a range of layout cells.
+description: Compute the region occupied by a range of layout cells.
+parameters:
+- name: layout
+  type: GridLayout
+  required: true
+  default: null
+- name: row
+  type: Union[int, Sequence[int]]
+  required: true
+  default: null
+- name: col
+  type: Union[int, Sequence[int]]
+  required: true
+  default: null
+- name: parent_w_px
+  type: Optional[float]
+  required: false
+  default: null
+- name: parent_h_px
+  type: Optional[float]
+  required: false
+  default: null
+- name: dpi
+  type: float
+  required: false
+  default: 150.0
+mutates: ''
+returns: Dict[str, Unit]
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

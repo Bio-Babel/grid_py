@@ -1,0 +1,88 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.grid_panel.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.grid_panel
+import_path: grid_py.grid_panel
+kind: function
+signature: 'grid_panel(x: ''Optional[Sequence[float]]'' = None, y: ''Optional[Sequence[float]]''
+  = None, zrange: ''Sequence[float]'' = (0, 1), zbin: ''Optional[Sequence[float]]''
+  = None, xscale: ''Optional[Sequence[float]]'' = None, yscale: ''Optional[Sequence[float]]''
+  = None, axis_left: ''bool'' = True, axis_left_label: ''bool'' = True, axis_right:
+  ''bool'' = False, axis_right_label: ''bool'' = True, axis_bottom: ''bool'' = True,
+  axis_bottom_label: ''bool'' = True, axis_top: ''bool'' = False, axis_top_label:
+  ''bool'' = True, vp: ''Optional[Any]'' = None) -> ''Dict[str, Viewport]'''
+purpose: Draw a panel with optional axes and strip (simple stub).
+description: Draw a panel with optional axes and strip (simple stub).
+parameters:
+- name: x
+  type: Optional[Sequence[float]]
+  required: false
+  default: null
+- name: y
+  type: Optional[Sequence[float]]
+  required: false
+  default: null
+- name: zrange
+  type: Sequence[float]
+  required: false
+  default: (0, 1)
+- name: zbin
+  type: Optional[Sequence[float]]
+  required: false
+  default: null
+- name: xscale
+  type: Optional[Sequence[float]]
+  required: false
+  default: null
+- name: yscale
+  type: Optional[Sequence[float]]
+  required: false
+  default: null
+- name: axis_left
+  type: bool
+  required: false
+  default: true
+- name: axis_left_label
+  type: bool
+  required: false
+  default: true
+- name: axis_right
+  type: bool
+  required: false
+  default: false
+- name: axis_right_label
+  type: bool
+  required: false
+  default: true
+- name: axis_bottom
+  type: bool
+  required: false
+  default: true
+- name: axis_bottom_label
+  type: bool
+  required: false
+  default: true
+- name: axis_top
+  type: bool
+  required: false
+  default: false
+- name: axis_top_label
+  type: bool
+  required: false
+  default: true
+- name: vp
+  type: Optional[Any]
+  required: false
+  default: null
+mutates: ''
+returns: Dict[str, Viewport]
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

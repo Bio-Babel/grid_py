@@ -1,0 +1,65 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.grid_show_layout.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.grid_show_layout
+import_path: grid_py.grid_show_layout
+kind: function
+signature: 'grid_show_layout(layout: ''GridLayout'', newpage: ''bool'' = True, vp_ex:
+  ''float'' = 0.8, bg: ''str'' = ''light grey'', cell_border: ''str'' = ''blue'',
+  cell_fill: ''str'' = ''light blue'', cell_label: ''bool'' = True, label_col: ''str''
+  = ''blue'', unit_col: ''str'' = ''red'', vp: ''Optional[Any]'' = None) -> ''Viewport'''
+purpose: Visualize a :class:`GridLayout`.
+description: Visualize a :class:`GridLayout`.
+parameters:
+- name: layout
+  type: GridLayout
+  required: true
+  default: null
+- name: newpage
+  type: bool
+  required: false
+  default: true
+- name: vp_ex
+  type: float
+  required: false
+  default: 0.8
+- name: bg
+  type: str
+  required: false
+  default: light grey
+- name: cell_border
+  type: str
+  required: false
+  default: blue
+- name: cell_fill
+  type: str
+  required: false
+  default: light blue
+- name: cell_label
+  type: bool
+  required: false
+  default: true
+- name: label_col
+  type: str
+  required: false
+  default: blue
+- name: unit_col
+  type: str
+  required: false
+  default: red
+- name: vp
+  type: Optional[Any]
+  required: false
+  default: null
+mutates: ''
+returns: Viewport
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

@@ -1,0 +1,92 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.grid_pack.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.grid_pack
+import_path: grid_py.grid_pack
+kind: function
+signature: 'grid_pack(frame: ''GTree'', grob: ''Grob'', redraw: ''bool'' = True, side:
+  ''Optional[str]'' = None, row: ''Optional[Any]'' = None, row_before: ''Optional[int]''
+  = None, row_after: ''Optional[int]'' = None, col: ''Optional[Any]'' = None, col_before:
+  ''Optional[int]'' = None, col_after: ''Optional[int]'' = None, width: ''Optional[Unit]''
+  = None, height: ''Optional[Unit]'' = None, force_width: ''bool'' = False, force_height:
+  ''bool'' = False, border: ''Optional[Sequence[Unit]]'' = None, dynamic: ''bool''
+  = False) -> ''GTree'''
+purpose: Pack a grob into a frame and optionally redraw.
+description: Pack a grob into a frame and optionally redraw.
+parameters:
+- name: frame
+  type: GTree
+  required: true
+  default: null
+- name: grob
+  type: Grob
+  required: true
+  default: null
+- name: redraw
+  type: bool
+  required: false
+  default: true
+- name: side
+  type: Optional[str]
+  required: false
+  default: null
+- name: row
+  type: Optional[Any]
+  required: false
+  default: null
+- name: row_before
+  type: Optional[int]
+  required: false
+  default: null
+- name: row_after
+  type: Optional[int]
+  required: false
+  default: null
+- name: col
+  type: Optional[Any]
+  required: false
+  default: null
+- name: col_before
+  type: Optional[int]
+  required: false
+  default: null
+- name: col_after
+  type: Optional[int]
+  required: false
+  default: null
+- name: width
+  type: Optional[Unit]
+  required: false
+  default: null
+- name: height
+  type: Optional[Unit]
+  required: false
+  default: null
+- name: force_width
+  type: bool
+  required: false
+  default: false
+- name: force_height
+  type: bool
+  required: false
+  default: false
+- name: border
+  type: Optional[Sequence[Unit]]
+  required: false
+  default: null
+- name: dynamic
+  type: bool
+  required: false
+  default: false
+mutates: ''
+returns: GTree
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

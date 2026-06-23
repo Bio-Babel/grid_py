@@ -1,7 +1,7 @@
 """AST detectors registered into biobabel via the ``biobabel.detectors``
 entry-point group (declared in this package's pyproject.toml).
 
-These three detectors used to live inside biobabel core as a hard-coded
+These detectors used to live inside biobabel core as a hard-coded
 ``_DETECTORS`` dispatch table driven by a mini-DSL in YAML. Schema v2 /
 ADR-0008 moved them here so the package that owns the domain knowledge
 (``grid_py``) also owns the detection code. biobabel core is now generic.
@@ -115,6 +115,50 @@ def unit_kw(tree: ast.AST, args: dict[str, Any]) -> list[DetectorMatch]:
                         detail={"units": units_value, "referenced": sorted(referenced)},
                     )
                 )
+    return hits
+
+
+def captured_stale_renderer(tree: ast.AST, args: dict[str, Any]) -> list[DetectorMatch]:
+    """Flag a captured renderer var written after an intervening grid_newpage.
+
+    grid_newpage() resets state (state.reset() -> _renderer=None) and rebinds a
+    fresh device, detaching any earlier-captured renderer. Writing that stale
+    ref (write_to_png/to_png_bytes/save/finish) yields a silently BLANK file.
+    """
+    renderer_ctors = set(args.get("ctors", ["CairoRenderer", "WebRenderer"]))
+    newpage_fn = args.get("newpage", "grid_newpage")
+    write_methods = set(args.get("write_methods",
+                                 ["write_to_png", "to_png_bytes", "save", "finish"]))
+
+    assigned: dict[str, int] = {}
+    newpage_lines: list[int] = []
+    captured_writes: list[tuple[str, int]] = []
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Call):
+            if _call_name(node.value.func) in renderer_ctors:
+                for tgt in node.targets:
+                    if isinstance(tgt, ast.Name):
+                        assigned.setdefault(tgt.id, node.lineno)
+        elif isinstance(node, ast.Call):
+            fn = _call_name(node.func)
+            if fn == newpage_fn:
+                newpage_lines.append(node.lineno)
+            elif (fn in write_methods
+                  and isinstance(node.func, ast.Attribute)
+                  and isinstance(node.func.value, ast.Name)):
+                captured_writes.append((node.func.value.id, node.lineno))
+
+    hits: list[DetectorMatch] = []
+    for var, write_line in captured_writes:
+        assign_line = assigned.get(var)
+        if assign_line is None:
+            continue
+        if any(assign_line < np < write_line for np in newpage_lines):
+            hits.append(DetectorMatch(
+                line=write_line,
+                detail={"renderer_var": var, "written_after_newpage": True},
+            ))
     return hits
 
 

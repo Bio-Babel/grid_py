@@ -1,0 +1,31 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.grid_revert.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.grid_revert
+import_path: grid_py.grid_revert
+kind: function
+signature: 'grid_revert(x: ''Optional[Union[Grob, GTree]]'' = None, redraw: ''bool''
+  = True) -> ''Optional[Union[Grob, GTree]]'''
+purpose: Revert previously forced grobs to their original (unforced) state.
+description: Revert previously forced grobs to their original (unforced) state.
+parameters:
+- name: x
+  type: Optional[Union[Grob, GTree]]
+  required: false
+  default: null
+- name: redraw
+  type: bool
+  required: false
+  default: true
+mutates: ''
+returns: Optional[Union[Grob, GTree]]
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

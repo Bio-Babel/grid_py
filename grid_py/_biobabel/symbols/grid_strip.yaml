@@ -1,0 +1,48 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.grid_strip.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.grid_strip
+import_path: grid_py.grid_strip
+kind: function
+signature: 'grid_strip(label: ''str'' = ''whatever'', range_full: ''Sequence[float]''
+  = (0, 1), range_thumb: ''Sequence[float]'' = (0.3, 0.6), fill: ''str'' = ''#FFBF00'',
+  thumb: ''str'' = ''#FF8000'', vp: ''Optional[Any]'' = None) -> ''None'''
+purpose: Draw a strip indicator (simple stub).
+description: Draw a strip indicator (simple stub).
+parameters:
+- name: label
+  type: str
+  required: false
+  default: whatever
+- name: range_full
+  type: Sequence[float]
+  required: false
+  default: (0, 1)
+- name: range_thumb
+  type: Sequence[float]
+  required: false
+  default: (0.3, 0.6)
+- name: fill
+  type: str
+  required: false
+  default: '#FFBF00'
+- name: thumb
+  type: str
+  required: false
+  default: '#FF8000'
+- name: vp
+  type: Optional[Any]
+  required: false
+  default: null
+mutates: ''
+returns: None
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

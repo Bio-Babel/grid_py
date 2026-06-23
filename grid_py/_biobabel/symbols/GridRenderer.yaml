@@ -1,0 +1,44 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.GridRenderer.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.GridRenderer
+import_path: grid_py.GridRenderer
+kind: class
+signature: 'GridRenderer(width: ''float'' = 7.0, height: ''float'' = 5.0, dpi: ''float''
+  = 150.0, device_width: ''Optional[float]'' = None, device_height: ''Optional[float]''
+  = None) -> ''None'''
+purpose: Abstract base for all grid_py rendering backends.
+description: Abstract base for all grid_py rendering backends.
+parameters:
+- name: width
+  type: float
+  required: false
+  default: 7.0
+- name: height
+  type: float
+  required: false
+  default: 5.0
+- name: dpi
+  type: float
+  required: false
+  default: 150.0
+- name: device_width
+  type: Optional[float]
+  required: false
+  default: null
+- name: device_height
+  type: Optional[float]
+  required: false
+  default: null
+mutates: ''
+returns: None
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

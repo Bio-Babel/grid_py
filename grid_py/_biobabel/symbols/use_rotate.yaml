@@ -1,0 +1,26 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.use_rotate.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.use_rotate
+import_path: grid_py.use_rotate
+kind: function
+signature: 'use_rotate(angle: ''float'' = 0) -> ''Matrix3x3'''
+purpose: Return a 3x3 rotation matrix for a group use.
+description: Return a 3x3 rotation matrix for a group use.
+parameters:
+- name: angle
+  type: float
+  required: false
+  default: 0
+mutates: ''
+returns: Matrix3x3
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

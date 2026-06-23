@@ -1,0 +1,30 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.grob_path_listing.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.grob_path_listing
+import_path: grid_py.grob_path_listing
+kind: function
+signature: 'grob_path_listing(x: ''FlatGridListing'', **kwargs: ''Any'') -> ''None'''
+purpose: Print only the grob entries from a :class:`FlatGridListing`.
+description: Print only the grob entries from a :class:`FlatGridListing`.
+parameters:
+- name: x
+  type: FlatGridListing
+  required: true
+  default: null
+- name: kwargs
+  type: Any
+  required: true
+  default: null
+mutates: ''
+returns: None
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

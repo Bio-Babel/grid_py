@@ -1,0 +1,27 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.bezier_points.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+
+id: grid_py.bezier_points
+import_path: grid_py.bezier_points
+kind: function
+signature: 'bezier_points(x: ''Grob'') -> ''Union[Dict[str, NDArray[np.float64]], List[Dict[str, NDArray[np.float64]]]]'''
+purpose: Extract the evaluated curve points from a bezier grob.
+description: Extract the evaluated curve points from a bezier grob.
+parameters:
+- name: x
+  type: Grob
+  required: true
+  default: null
+mutates: ''
+returns: Union[Dict[str, NDArray[np.float64]], List[Dict[str, NDArray[np.float64]]]]
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

@@ -1,0 +1,30 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.set_children.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.set_children
+import_path: grid_py.set_children
+kind: function
+signature: 'set_children(gtree: ''GTree'', children: ''GList'') -> ''GTree'''
+purpose: Return a copy of *gtree* with its children replaced.
+description: Return a copy of *gtree* with its children replaced.
+parameters:
+- name: gtree
+  type: GTree
+  required: true
+  default: null
+- name: children
+  type: GList
+  required: true
+  default: null
+mutates: ''
+returns: GTree
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

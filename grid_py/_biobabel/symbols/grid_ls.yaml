@@ -1,0 +1,48 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.grid_ls.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.grid_ls
+import_path: grid_py.grid_ls
+kind: function
+signature: 'grid_ls(x: ''Any'' = None, grobs: ''bool'' = True, viewports: ''bool''
+  = False, fullNames: ''bool'' = False, recursive: ''bool'' = True, print_: ''Union[bool,
+  Callable[..., Any]]'' = True) -> ''FlatGridListing'''
+purpose: List grobs and/or viewports.
+description: List grobs and/or viewports.
+parameters:
+- name: x
+  type: Any
+  required: false
+  default: null
+- name: grobs
+  type: bool
+  required: false
+  default: true
+- name: viewports
+  type: bool
+  required: false
+  default: false
+- name: fullNames
+  type: bool
+  required: false
+  default: false
+- name: recursive
+  type: bool
+  required: false
+  default: true
+- name: print_
+  type: Union[bool, Callable[..., Any]]
+  required: false
+  default: true
+mutates: ''
+returns: FlatGridListing
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

@@ -1,0 +1,48 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.grid_use.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.grid_use
+import_path: grid_py.grid_use
+kind: function
+signature: 'grid_use(group: ''str'', transform: ''Optional[NDArray[np.float64]]''
+  = None, name: ''Optional[str]'' = None, gp: ''Optional[Gpar]'' = None, vp: ''Optional[Any]''
+  = None, draw: ''bool'' = True) -> ''UseGrob'''
+purpose: Create and optionally draw a :class:`UseGrob`.
+description: Create and optionally draw a :class:`UseGrob`.
+parameters:
+- name: group
+  type: str
+  required: true
+  default: null
+- name: transform
+  type: Optional[NDArray[np.float64]]
+  required: false
+  default: null
+- name: name
+  type: Optional[str]
+  required: false
+  default: null
+- name: gp
+  type: Optional[Gpar]
+  required: false
+  default: null
+- name: vp
+  type: Optional[Any]
+  required: false
+  default: null
+- name: draw
+  type: bool
+  required: false
+  default: true
+mutates: ''
+returns: UseGrob
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

@@ -1,0 +1,94 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.Viewport.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.Viewport
+import_path: grid_py.Viewport
+kind: class
+signature: 'Viewport(x: ''Union[Unit, float, int, None]'' = None, y: ''Union[Unit,
+  float, int, None]'' = None, width: ''Union[Unit, float, int, None]'' = None, height:
+  ''Union[Unit, float, int, None]'' = None, default_units: ''str'' = ''npc'', just:
+  ''Any'' = ''centre'', gp: ''Optional[Gpar]'' = None, clip: ''Any'' = ''inherit'',
+  mask: ''Any'' = ''inherit'', xscale: ''Optional[Sequence[float]]'' = None, yscale:
+  ''Optional[Sequence[float]]'' = None, angle: ''float'' = 0, layout: ''Optional[GridLayout]''
+  = None, layout_pos_row: ''Optional[Union[int, Sequence[int]]]'' = None, layout_pos_col:
+  ''Optional[Union[int, Sequence[int]]]'' = None, name: ''Optional[str]'' = None)
+  -> ''None'''
+purpose: A viewport specification -- a rectangular sub-region of a device.
+description: A viewport specification -- a rectangular sub-region of a device.
+parameters:
+- name: x
+  type: Union[Unit, float, int, None]
+  required: false
+  default: null
+- name: y
+  type: Union[Unit, float, int, None]
+  required: false
+  default: null
+- name: width
+  type: Union[Unit, float, int, None]
+  required: false
+  default: null
+- name: height
+  type: Union[Unit, float, int, None]
+  required: false
+  default: null
+- name: default_units
+  type: str
+  required: false
+  default: npc
+- name: just
+  type: Any
+  required: false
+  default: centre
+- name: gp
+  type: Optional[Gpar]
+  required: false
+  default: null
+- name: clip
+  type: Any
+  required: false
+  default: inherit
+- name: mask
+  type: Any
+  required: false
+  default: inherit
+- name: xscale
+  type: Optional[Sequence[float]]
+  required: false
+  default: null
+- name: yscale
+  type: Optional[Sequence[float]]
+  required: false
+  default: null
+- name: angle
+  type: float
+  required: false
+  default: 0
+- name: layout
+  type: Optional[GridLayout]
+  required: false
+  default: null
+- name: layout_pos_row
+  type: Optional[Union[int, Sequence[int]]]
+  required: false
+  default: null
+- name: layout_pos_col
+  type: Optional[Union[int, Sequence[int]]]
+  required: false
+  default: null
+- name: name
+  type: Optional[str]
+  required: false
+  default: null
+mutates: ''
+returns: None
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

@@ -1,0 +1,62 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.glyph_grob.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.glyph_grob
+import_path: grid_py.glyph_grob
+kind: function
+signature: 'glyph_grob(glyphInfo: ''GlyphInfo'', x: ''Union[float, Unit]'' = 0.5,
+  y: ''Union[float, Unit]'' = 0.5, default_units: ''str'' = ''npc'', hjust: ''Union[float,
+  str, GlyphJust]'' = ''centre'', vjust: ''Union[float, str, GlyphJust]'' = ''centre'',
+  gp: ''Optional[Gpar]'' = None, vp: ''Optional[Any]'' = None, name: ''Optional[str]''
+  = None) -> ''Grob'''
+purpose: Create a glyph grob for rendering pre-typeset glyph information.
+description: Create a glyph grob for rendering pre-typeset glyph information.
+parameters:
+- name: glyphInfo
+  type: GlyphInfo
+  required: true
+  default: null
+- name: x
+  type: Union[float, Unit]
+  required: false
+  default: 0.5
+- name: y
+  type: Union[float, Unit]
+  required: false
+  default: 0.5
+- name: default_units
+  type: str
+  required: false
+  default: npc
+- name: hjust
+  type: Union[float, str, GlyphJust]
+  required: false
+  default: centre
+- name: vjust
+  type: Union[float, str, GlyphJust]
+  required: false
+  default: centre
+- name: gp
+  type: Optional[Gpar]
+  required: false
+  default: null
+- name: vp
+  type: Optional[Any]
+  required: false
+  default: null
+- name: name
+  type: Optional[str]
+  required: false
+  default: null
+mutates: ''
+returns: Grob
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

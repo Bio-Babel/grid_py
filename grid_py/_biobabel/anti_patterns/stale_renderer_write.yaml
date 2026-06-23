@@ -1,0 +1,39 @@
+id: grid_py.stale_renderer_write
+name: Writing a captured renderer after an intervening grid_newpage
+applicable_to:
+  - grid_py.Renderer
+detection:
+  detector_id: rgrid.captured_stale_renderer
+  args:
+    ctors: [CairoRenderer, WebRenderer]
+    newpage: grid_newpage
+    write_methods: [write_to_png, to_png_bytes, save, finish]
+  static_only: true
+why_bad: |
+  Any `grid_newpage()` call — with OR without sizing args — does NOT just clear
+  the page. It calls `state.reset()` (which sets `_renderer=None`) and then
+  constructs and rebinds a fresh device. So a `CairoRenderer`/`WebRenderer` you
+  built and captured earlier is now detached (stale): the draw calls land on the
+  new bound device, while a final `renderer.write_to_png(path)` on your captured
+  reference writes the OLD, now-empty device — producing a silently BLANK file.
+  The code runs cleanly (no exception, the file exists), so execution-feedback /
+  iterate loops cannot catch it.
+
+  Always finalize the CURRENTLY-BOUND renderer, never a captured ref:
+  `get_state().get_renderer().write_to_png(path)`. This is robust no matter how
+  many times `grid_newpage()` re-created the device.
+correct_pattern: grid_py.Renderer
+code_example_wrong: |
+  # Captured renderer + an intervening grid_newpage() -> blank png:
+  renderer = CairoRenderer(width=8, height=6, dpi=150, surface_type="image", bg="white")
+  get_state().init_device(renderer)
+  grid_newpage()                       # resets state & rebinds a fresh device
+  grid_draw(build_layout())
+  renderer.write_to_png("plot.png")  # writes the ORIGINAL, now-detached (empty) device
+code_example_right: |
+  # Finalize the bound renderer; immune to device re-creation:
+  renderer = CairoRenderer(width=8, height=6, dpi=150, surface_type="image", bg="white")
+  get_state().init_device(renderer)
+  grid_newpage()
+  grid_draw(build_layout())
+  get_state().get_renderer().write_to_png("plot.png")

@@ -1,0 +1,57 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.grid_yaxis.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.grid_yaxis
+import_path: grid_py.grid_yaxis
+kind: function
+signature: 'grid_yaxis(at: ''Optional[Sequence[float]]'' = None, label: ''Any'' =
+  True, main: ''bool'' = True, edits: ''Optional[Any]'' = None, name: ''Optional[str]''
+  = None, gp: ''Optional[Gpar]'' = None, draw: ''bool'' = True, vp: ''Optional[Any]''
+  = None) -> ''GTree'''
+purpose: Create and optionally draw a y-axis.
+description: Create and optionally draw a y-axis.
+parameters:
+- name: at
+  type: Optional[Sequence[float]]
+  required: false
+  default: null
+- name: label
+  type: Any
+  required: false
+  default: true
+- name: main
+  type: bool
+  required: false
+  default: true
+- name: edits
+  type: Optional[Any]
+  required: false
+  default: null
+- name: name
+  type: Optional[str]
+  required: false
+  default: null
+- name: gp
+  type: Optional[Gpar]
+  required: false
+  default: null
+- name: draw
+  type: bool
+  required: false
+  default: true
+- name: vp
+  type: Optional[Any]
+  required: false
+  default: null
+mutates: ''
+returns: GTree
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

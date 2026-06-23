@@ -72,9 +72,10 @@ grid_py = "grid_py._biobabel:get_manifest"
 # from grid_py/_biobabel/anti_patterns/*.yaml. Per ADR-0008 (biobabel
 # schema v2), detector implementations live with the package that owns
 # the domain knowledge, not in biobabel core.
-"rgrid.for_loop_calls" = "grid_py._biobabel.detectors:for_loop_calls"
-"rgrid.unbalanced"     = "grid_py._biobabel.detectors:unbalanced"
-"rgrid.unit_kw"        = "grid_py._biobabel.detectors:unit_kw"
+"rgrid.for_loop_calls"         = "grid_py._biobabel.detectors:for_loop_calls"
+"rgrid.unbalanced"             = "grid_py._biobabel.detectors:unbalanced"
+"rgrid.unit_kw"                = "grid_py._biobabel.detectors:unit_kw"
+"rgrid.captured_stale_renderer" = "grid_py._biobabel.detectors:captured_stale_renderer"
 
 [tool.biobabel]
 contract_class = "grammar"

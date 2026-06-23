@@ -22,8 +22,8 @@ description: 'The output target that turns drawn grobs into pixels (or vector co
   '
 invariants:
 - A renderer must be bound via `get_state().init_device(renderer)` before any `grid_draw` succeeds.
-- '`grid_newpage()` clears the current page but preserves the bound renderer; call it before each fresh figure.'
-- Raster renderers (CairoRenderer with `surface_type='image'`) finalize via `renderer.write_to_png(path)` or `renderer.to_png_bytes()`.
+- '`grid_newpage()` called with NO arguments clears the current page and preserves the bound renderer. But `grid_newpage(width=..., height=..., dpi=..., bg=...)` CONSTRUCTS A NEW device and rebinds it, DETACHING any renderer you built and captured earlier — so a variable still pointing at the old renderer is now stale.'
+- 'Finalize a raster figure by writing the CURRENTLY-BOUND renderer: `get_state().get_renderer().write_to_png(path)`. Prefer this over writing a captured `renderer` reference (`renderer.write_to_png(path)`) — the captured ref silently produces a BLANK png if the device was re-created in between (e.g. by `grid_newpage(width=...)`). Writing the bound renderer is always correct.'
 - Vector renderers (CairoRenderer with `surface_type='pdf'`/`'svg'`/`'ps'`) require `filename=` at construction and finish when the renderer is garbage collected (or via explicit context-manager use).
 - Switching renderers mid-session requires another `init_device(new_renderer)` call; the old renderer is detached.
 mental_model: 'For R users:

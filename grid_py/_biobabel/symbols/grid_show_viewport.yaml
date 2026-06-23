@@ -1,0 +1,70 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.grid_show_viewport.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.grid_show_viewport
+import_path: grid_py.grid_show_viewport
+kind: function
+signature: 'grid_show_viewport(v: ''Optional[Viewport]'' = None, parent_layout: ''Optional[GridLayout]''
+  = None, newpage: ''bool'' = True, vp_ex: ''float'' = 0.8, border_fill: ''str'' =
+  ''light grey'', vp_col: ''str'' = ''blue'', vp_fill: ''str'' = ''light blue'', scale_col:
+  ''str'' = ''red'', vp: ''Optional[Any]'' = None, recurse: ''bool'' = True, depth:
+  ''int'' = 0) -> ''None'''
+purpose: Visualize a viewport (or viewport tree).
+description: Visualize a viewport (or viewport tree).
+parameters:
+- name: v
+  type: Optional[Viewport]
+  required: false
+  default: null
+- name: parent_layout
+  type: Optional[GridLayout]
+  required: false
+  default: null
+- name: newpage
+  type: bool
+  required: false
+  default: true
+- name: vp_ex
+  type: float
+  required: false
+  default: 0.8
+- name: border_fill
+  type: str
+  required: false
+  default: light grey
+- name: vp_col
+  type: str
+  required: false
+  default: blue
+- name: vp_fill
+  type: str
+  required: false
+  default: light blue
+- name: scale_col
+  type: str
+  required: false
+  default: red
+- name: vp
+  type: Optional[Any]
+  required: false
+  default: null
+- name: recurse
+  type: bool
+  required: false
+  default: true
+- name: depth
+  type: int
+  required: false
+  default: 0
+mutates: ''
+returns: None
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

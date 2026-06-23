@@ -1,0 +1,52 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.arrows_grob.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.arrows_grob
+import_path: grid_py.arrows_grob
+kind: function
+signature: 'arrows_grob(x: ''Any'' = None, y: ''Any'' = None, default_units: ''str''
+  = ''npc'', arrow: ''Optional[Arrow]'' = None, name: ''Optional[str]'' = None, gp:
+  ''Optional[Gpar]'' = None, vp: ''Optional[Any]'' = None) -> ''Grob'''
+purpose: Create an *arrows* grob.
+description: Create an *arrows* grob.
+parameters:
+- name: x
+  type: Any
+  required: false
+  default: null
+- name: y
+  type: Any
+  required: false
+  default: null
+- name: default_units
+  type: str
+  required: false
+  default: npc
+- name: arrow
+  type: Optional[Arrow]
+  required: false
+  default: null
+- name: name
+  type: Optional[str]
+  required: false
+  default: null
+- name: gp
+  type: Optional[Gpar]
+  required: false
+  default: null
+- name: vp
+  type: Optional[Any]
+  required: false
+  default: null
+mutates: ''
+returns: Grob
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

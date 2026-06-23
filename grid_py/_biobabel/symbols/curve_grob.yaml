@@ -1,0 +1,95 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.curve_grob.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.curve_grob
+import_path: grid_py.curve_grob
+kind: function
+signature: 'curve_grob(x1: ''Any'' = 0, y1: ''Any'' = 0, x2: ''Any'' = 1, y2: ''Any''
+  = 1, default_units: ''str'' = ''npc'', curvature: ''float'' = 1.0, angle: ''float''
+  = 90.0, ncp: ''int'' = 1, shape: ''float'' = 0.5, square: ''bool'' = True, squareShape:
+  ''float'' = 1.0, inflect: ''bool'' = False, arrow: ''Optional[Arrow]'' = None, open_:
+  ''bool'' = True, name: ''Optional[str]'' = None, gp: ''Optional[Gpar]'' = None,
+  vp: ''Optional[Any]'' = None) -> ''GTree'''
+purpose: Create a *curve* grob (GTree).
+description: Create a *curve* grob (GTree).
+parameters:
+- name: x1
+  type: Any
+  required: false
+  default: 0
+- name: y1
+  type: Any
+  required: false
+  default: 0
+- name: x2
+  type: Any
+  required: false
+  default: 1
+- name: y2
+  type: Any
+  required: false
+  default: 1
+- name: default_units
+  type: str
+  required: false
+  default: npc
+- name: curvature
+  type: float
+  required: false
+  default: 1.0
+- name: angle
+  type: float
+  required: false
+  default: 90.0
+- name: ncp
+  type: int
+  required: false
+  default: 1
+- name: shape
+  type: float
+  required: false
+  default: 0.5
+- name: square
+  type: bool
+  required: false
+  default: true
+- name: squareShape
+  type: float
+  required: false
+  default: 1.0
+- name: inflect
+  type: bool
+  required: false
+  default: false
+- name: arrow
+  type: Optional[Arrow]
+  required: false
+  default: null
+- name: open_
+  type: bool
+  required: false
+  default: true
+- name: name
+  type: Optional[str]
+  required: false
+  default: null
+- name: gp
+  type: Optional[Gpar]
+  required: false
+  default: null
+- name: vp
+  type: Optional[Any]
+  required: false
+  default: null
+mutates: ''
+returns: GTree
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

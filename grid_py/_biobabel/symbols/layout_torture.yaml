@@ -1,0 +1,30 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.layout_torture.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.layout_torture
+import_path: grid_py.layout_torture
+kind: function
+signature: 'layout_torture(n_row: ''int'' = 2, n_col: ''int'' = 2) -> ''None'''
+purpose: Stress-test the layout system with a simple grid of cells.
+description: Stress-test the layout system with a simple grid of cells.
+parameters:
+- name: n_row
+  type: int
+  required: false
+  default: 2
+- name: n_col
+  type: int
+  required: false
+  default: 2
+mutates: ''
+returns: None
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

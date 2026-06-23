@@ -1,0 +1,26 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.string_width.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.string_width
+import_path: grid_py.string_width
+kind: function
+signature: 'string_width(string: ''Union[str, Sequence[str]]'') -> ''Unit'''
+purpose: Create a ``"strwidth"`` unit for the given string(s).
+description: Create a ``"strwidth"`` unit for the given string(s).
+parameters:
+- name: string
+  type: Union[str, Sequence[str]]
+  required: true
+  default: null
+mutates: ''
+returns: Unit
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

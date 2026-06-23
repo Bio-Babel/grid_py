@@ -11,30 +11,7 @@ r_package:
   repo: R-base
   version_or_commit: 4.5.3
   fidelity: full
-capabilities:
-- viewport-stack
-- grob-tree
-- units-and-coordinates
-- layered-rendering
-- low-level-graphics
-domain_tags:
-- visualization
-- low-level-graphics
-task_tags:
-- new-plotting-package
-- sub-region-drawing
-- multi-panel-layout
-- custom-axes
-- coordinate-transforms
 foundation: []
-triggers:
-- build a plotting package on top of grid
-- draw in a specific sub-region of the device
-- use Unit, Viewport, grob, gpar
-- port an R grid-based package to Python
-not_when:
-- user just wants a one-line plot (use ggplot2_py or matplotlib instead)
-- user only needs a heatmap (use pheatmap or ComplexHeatmap)
 templates:
 - id: grid_py.basic_subplot
   path: templates/basic_subplot.py

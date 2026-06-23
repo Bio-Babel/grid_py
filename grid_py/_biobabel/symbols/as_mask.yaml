@@ -1,0 +1,30 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.as_mask.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.as_mask
+import_path: grid_py.as_mask
+kind: function
+signature: 'as_mask(x: ''Union[Any, bool]'', type: ''str'' = ''alpha'') -> ''GridMask'''
+purpose: Convert a grob (or boolean) to a :class:`GridMask`.
+description: Convert a grob (or boolean) to a :class:`GridMask`.
+parameters:
+- name: x
+  type: Union[Any, bool]
+  required: true
+  default: null
+- name: type
+  type: str
+  required: false
+  default: alpha
+mutates: ''
+returns: GridMask
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

@@ -1,0 +1,62 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.pattern.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.pattern
+import_path: grid_py.pattern
+kind: function
+signature: 'pattern(grob: ''Any'', x: ''Optional[Union[Unit, float]]'' = None, y:
+  ''Optional[Union[Unit, float]]'' = None, width: ''Optional[Union[Unit, float]]''
+  = None, height: ''Optional[Union[Unit, float]]'' = None, default_units: ''str''
+  = ''npc'', just: ''Union[str, tuple[float, float]]'' = ''centre'', extend: ''str''
+  = ''pad'', group: ''bool'' = True) -> ''Pattern'''
+purpose: Create a :class:`Pattern` (tiling fill).
+description: Create a :class:`Pattern` (tiling fill).
+parameters:
+- name: grob
+  type: Any
+  required: true
+  default: null
+- name: x
+  type: Optional[Union[Unit, float]]
+  required: false
+  default: null
+- name: y
+  type: Optional[Union[Unit, float]]
+  required: false
+  default: null
+- name: width
+  type: Optional[Union[Unit, float]]
+  required: false
+  default: null
+- name: height
+  type: Optional[Union[Unit, float]]
+  required: false
+  default: null
+- name: default_units
+  type: str
+  required: false
+  default: npc
+- name: just
+  type: Union[str, tuple[float, float]]
+  required: false
+  default: centre
+- name: extend
+  type: str
+  required: false
+  default: pad
+- name: group
+  type: bool
+  required: false
+  default: true
+mutates: ''
+returns: Pattern
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

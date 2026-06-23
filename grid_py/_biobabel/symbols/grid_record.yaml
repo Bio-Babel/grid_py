@@ -1,0 +1,35 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.grid_record.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.grid_record
+import_path: grid_py.grid_record
+kind: function
+signature: 'grid_record(expr: ''Callable[..., None]'', list_: ''Optional[Dict[str,
+  Any]]'' = None, name: ''Optional[str]'' = None) -> ''None'''
+purpose: Record an expression as a grob and draw it.
+description: Record an expression as a grob and draw it.
+parameters:
+- name: expr
+  type: Callable[..., None]
+  required: true
+  default: null
+- name: list_
+  type: Optional[Dict[str, Any]]
+  required: false
+  default: null
+- name: name
+  type: Optional[str]
+  required: false
+  default: null
+mutates: ''
+returns: None
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

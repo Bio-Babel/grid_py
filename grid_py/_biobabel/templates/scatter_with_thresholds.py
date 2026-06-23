@@ -61,7 +61,10 @@ def main(out_path: Path = Path("scatter_with_thresholds.png")) -> Path:
     finally:
         pop_viewport()
 
-    renderer.write_to_png(str(out_path))
+    # Finalize the CURRENTLY-bound renderer, not the captured `renderer` ref
+    # (a captured ref goes stale if the device is re-created, e.g. by a later
+    # grid_newpage(width=...), producing a silent blank PNG).
+    get_state().get_renderer().write_to_png(str(out_path))
     return out_path
 
 

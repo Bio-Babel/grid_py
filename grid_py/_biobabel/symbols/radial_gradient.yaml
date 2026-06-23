@@ -1,0 +1,71 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.radial_gradient.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.radial_gradient
+import_path: grid_py.radial_gradient
+kind: function
+signature: 'radial_gradient(colours: ''list[str]'' = None, stops: ''Optional[list[float]]''
+  = None, cx1: ''Optional[Union[Unit, float]]'' = None, cy1: ''Optional[Union[Unit,
+  float]]'' = None, r1: ''Optional[Union[Unit, float]]'' = None, cx2: ''Optional[Union[Unit,
+  float]]'' = None, cy2: ''Optional[Union[Unit, float]]'' = None, r2: ''Optional[Union[Unit,
+  float]]'' = None, default_units: ''str'' = ''npc'', extend: ''str'' = ''pad'', group:
+  ''bool'' = True) -> ''RadialGradient'''
+purpose: Create a :class:`RadialGradient`.
+description: Create a :class:`RadialGradient`.
+parameters:
+- name: colours
+  type: list[str]
+  required: false
+  default: null
+- name: stops
+  type: Optional[list[float]]
+  required: false
+  default: null
+- name: cx1
+  type: Optional[Union[Unit, float]]
+  required: false
+  default: null
+- name: cy1
+  type: Optional[Union[Unit, float]]
+  required: false
+  default: null
+- name: r1
+  type: Optional[Union[Unit, float]]
+  required: false
+  default: null
+- name: cx2
+  type: Optional[Union[Unit, float]]
+  required: false
+  default: null
+- name: cy2
+  type: Optional[Union[Unit, float]]
+  required: false
+  default: null
+- name: r2
+  type: Optional[Union[Unit, float]]
+  required: false
+  default: null
+- name: default_units
+  type: str
+  required: false
+  default: npc
+- name: extend
+  type: str
+  required: false
+  default: pad
+- name: group
+  type: bool
+  required: false
+  default: true
+mutates: ''
+returns: RadialGradient
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

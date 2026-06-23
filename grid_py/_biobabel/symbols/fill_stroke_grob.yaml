@@ -1,0 +1,43 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.fill_stroke_grob.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.fill_stroke_grob
+import_path: grid_py.fill_stroke_grob
+kind: function
+signature: 'fill_stroke_grob(x: ''Any'', rule: ''str'' = ''winding'', name: ''Optional[str]''
+  = None, gp: ''Optional[Gpar]'' = None, vp: ''Optional[Any]'' = None) -> ''Grob'''
+purpose: Create a fill-and-stroke path grob.
+description: Create a fill-and-stroke path grob.
+parameters:
+- name: x
+  type: Any
+  required: true
+  default: null
+- name: rule
+  type: str
+  required: false
+  default: winding
+- name: name
+  type: Optional[str]
+  required: false
+  default: null
+- name: gp
+  type: Optional[Gpar]
+  required: false
+  default: null
+- name: vp
+  type: Optional[Any]
+  required: false
+  default: null
+mutates: ''
+returns: Grob
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

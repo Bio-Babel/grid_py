@@ -42,7 +42,11 @@ def main(out_path: Path = Path("multi_panel.png")) -> Path:
     finally:
         pop_viewport()
 
-    renderer.write_to_png(str(out_path))
+    # Finalize the CURRENTLY-bound renderer, not the captured `renderer` ref.
+    # Writing the captured ref breaks silently (blank PNG) if a fresh page was
+    # opened with sizing args (grid_newpage(width=...)), which re-creates the
+    # device and detaches the original renderer.
+    get_state().get_renderer().write_to_png(str(out_path))
     return out_path
 
 

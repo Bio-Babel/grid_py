@@ -1,0 +1,35 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.GridPath.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.GridPath
+import_path: grid_py.GridPath
+kind: class
+signature: 'GridPath(grob: ''Any'', gp: ''Any'' = None, rule: ''str'' = ''winding'')
+  -> ''None'''
+purpose: Wrapper that marks a grob for path-based stroke/fill operations.
+description: Wrapper that marks a grob for path-based stroke/fill operations.
+parameters:
+- name: grob
+  type: Any
+  required: true
+  default: null
+- name: gp
+  type: Any
+  required: false
+  default: null
+- name: rule
+  type: str
+  required: false
+  default: winding
+mutates: ''
+returns: None
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

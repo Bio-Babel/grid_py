@@ -1,0 +1,39 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.device_dim.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.device_dim
+import_path: grid_py.device_dim
+kind: function
+signature: 'device_dim(w: ''Unit'', h: ''Unit'', value_only: ''bool'' = False, device:
+  ''bool'' = False) -> ''dict'''
+purpose: Convert grid dimensions to absolute device dimensions.
+description: Convert grid dimensions to absolute device dimensions.
+parameters:
+- name: w
+  type: Unit
+  required: true
+  default: null
+- name: h
+  type: Unit
+  required: true
+  default: null
+- name: value_only
+  type: bool
+  required: false
+  default: false
+- name: device
+  type: bool
+  required: false
+  default: false
+mutates: ''
+returns: dict
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

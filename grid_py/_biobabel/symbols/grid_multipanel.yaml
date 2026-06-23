@@ -1,0 +1,57 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.grid_multipanel.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.grid_multipanel
+import_path: grid_py.grid_multipanel
+kind: function
+signature: 'grid_multipanel(x: ''Optional[Sequence[float]]'' = None, y: ''Optional[Sequence[float]]''
+  = None, z: ''Optional[Sequence[float]]'' = None, nplots: ''int'' = 9, nrow: ''Optional[int]''
+  = None, ncol: ''Optional[int]'' = None, newpage: ''bool'' = True, vp: ''Optional[Any]''
+  = None) -> ''None'''
+purpose: Draw a multi-panel layout (simple stub).
+description: Draw a multi-panel layout (simple stub).
+parameters:
+- name: x
+  type: Optional[Sequence[float]]
+  required: false
+  default: null
+- name: y
+  type: Optional[Sequence[float]]
+  required: false
+  default: null
+- name: z
+  type: Optional[Sequence[float]]
+  required: false
+  default: null
+- name: nplots
+  type: int
+  required: false
+  default: 9
+- name: nrow
+  type: Optional[int]
+  required: false
+  default: null
+- name: ncol
+  type: Optional[int]
+  required: false
+  default: null
+- name: newpage
+  type: bool
+  required: false
+  default: true
+- name: vp
+  type: Optional[Any]
+  required: false
+  default: null
+mutates: ''
+returns: None
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

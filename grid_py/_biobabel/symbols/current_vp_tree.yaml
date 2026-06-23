@@ -1,0 +1,22 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.current_vp_tree.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.current_vp_tree
+import_path: grid_py.current_vp_tree
+kind: function
+signature: current_vp_tree() -> 'Union[Viewport, VpTree]'
+purpose: Return the full viewport tree starting from the root.
+description: Return the full viewport tree starting from the root.
+parameters: []
+mutates: ''
+returns: Union[Viewport, VpTree]
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

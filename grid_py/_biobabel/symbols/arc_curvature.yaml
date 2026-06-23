@@ -1,0 +1,47 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.arc_curvature.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.arc_curvature
+import_path: grid_py.arc_curvature
+kind: function
+signature: 'arc_curvature(x1: ''float'', y1: ''float'', x2: ''float'', y2: ''float'',
+  x3: ''float'', y3: ''float'') -> ''float'''
+purpose: Compute the signed curvature of the arc through three points.
+description: Compute the signed curvature of the arc through three points.
+parameters:
+- name: x1
+  type: float
+  required: true
+  default: null
+- name: y1
+  type: float
+  required: true
+  default: null
+- name: x2
+  type: float
+  required: true
+  default: null
+- name: y2
+  type: float
+  required: true
+  default: null
+- name: x3
+  type: float
+  required: true
+  default: null
+- name: y3
+  type: float
+  required: true
+  default: null
+mutates: ''
+returns: float
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

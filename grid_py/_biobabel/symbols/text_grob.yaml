@@ -1,0 +1,74 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.text_grob.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.text_grob
+import_path: grid_py.text_grob
+kind: function
+signature: 'text_grob(label: ''Any'', x: ''Any'' = 0.5, y: ''Any'' = 0.5, default_units:
+  ''str'' = ''npc'', just: ''Union[str, Sequence[str]]'' = ''centre'', hjust: ''Optional[float]''
+  = None, vjust: ''Optional[float]'' = None, rot: ''float'' = 0, check_overlap: ''bool''
+  = False, name: ''Optional[str]'' = None, gp: ''Optional[Gpar]'' = None, vp: ''Optional[Any]''
+  = None) -> ''Grob'''
+purpose: Create a *text* grob.
+description: Create a *text* grob.
+parameters:
+- name: label
+  type: Any
+  required: true
+  default: null
+- name: x
+  type: Any
+  required: false
+  default: 0.5
+- name: y
+  type: Any
+  required: false
+  default: 0.5
+- name: default_units
+  type: str
+  required: false
+  default: npc
+- name: just
+  type: Union[str, Sequence[str]]
+  required: false
+  default: centre
+- name: hjust
+  type: Optional[float]
+  required: false
+  default: null
+- name: vjust
+  type: Optional[float]
+  required: false
+  default: null
+- name: rot
+  type: float
+  required: false
+  default: 0
+- name: check_overlap
+  type: bool
+  required: false
+  default: false
+- name: name
+  type: Optional[str]
+  required: false
+  default: null
+- name: gp
+  type: Optional[Gpar]
+  required: false
+  default: null
+- name: vp
+  type: Optional[Any]
+  required: false
+  default: null
+mutates: ''
+returns: Grob
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []

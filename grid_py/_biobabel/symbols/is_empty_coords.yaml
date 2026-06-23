@@ -1,0 +1,27 @@
+# AUTO-GENERATED tier-1 API surface — signature/params/docstring introspected
+# from the installed package (fact, not claim). Regenerate after a version bump:
+#   python tools/gen_tier1_symbols.py <import_name>
+# Hand-curated tier-2 fields (failure_fixes / anti-patterns / produces) are added
+# directly in this file by humans and are NOT overwritten on regeneration unless
+# you delete the file first.
+# Auto-generated stub for grid_py.is_empty_coords.
+# Review and fill: purpose, mutates, requires, writes, examples, failure_fixes, related.
+id: grid_py.is_empty_coords
+import_path: grid_py.is_empty_coords
+kind: function
+signature: 'is_empty_coords(x: ''Union[GridCoords, GridGrobCoords, GridGTreeCoords]'')
+  -> ''bool'''
+purpose: Test whether a coordinate container is the canonical empty set.
+description: Test whether a coordinate container is the canonical empty set.
+parameters:
+- name: x
+  type: Union[GridCoords, GridGrobCoords, GridGTreeCoords]
+  required: true
+  default: null
+mutates: ''
+returns: bool
+requires: []
+writes: []
+examples: []
+failure_fixes: []
+related: []
