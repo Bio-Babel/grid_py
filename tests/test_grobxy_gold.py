@@ -385,6 +385,56 @@ class TestTextEdgeStructure:
         assert (x0 - 2.5) == pytest.approx(2.5 - x180, abs=1e-9)
 
 
+class TestTextBoundsGold:
+    """Multi-placement text bounds vs R 4.4.3 (png cairo, res=100).
+
+    Gold: convertWidth/convertHeight(grobWidth/grobHeight(g), "inches").
+    Tolerance 0.03in covers the residual cairo-vs-R font-metric model
+    difference (single-line height: R GEStrHeight is a font-level
+    constant, this port uses per-glyph ink ascent — see _text_bbox).
+    """
+
+    # (labels, x, y, rot, just, gold_w, gold_h)
+    CASES = [
+        (["one", "two"], [0.3, 0.7], [0.3, 0.7], 0, None,
+         2.31, 2.12),
+        (["one", "two"], [0.3, 0.7], [0.3, 0.7], [0, 90], None,
+         2.215, 2.215),
+        (["one", "two"], [0.3, 0.7], [0.3, 0.7], 0, ("left", "bottom"),
+         2.31, 2.12),
+        # one label recycled over two anchors
+        ("abc", [0.2, 0.8], 0.5, 0, None, 3.3, 0.12),
+        # scalar anchor + two labels: only the FIRST label is measured
+        (["a", "bbbbbb"], 0.5, 0.5, 0, None, 0.1, 0.12),
+        ("one", 0.3, 0.3, 0, None, 0.31, 0.12),
+        ("Rotated", 0.5, 0.5, 35, None, 0.6094695216, 0.4768586933),
+    ]
+
+    @pytest.mark.parametrize("labels,x,y,rot,just,gw,gh", CASES)
+    def test_bounds_match_r(self, labels, x, y, rot, just, gw, gh):
+        from grid_py._size import height_details, width_details
+        grid_newpage(width=5.0, height=5.0, dpi=100)
+        kwargs = {} if just is None else {"just": just}
+        tg = g.text_grob(labels, x=x, y=y, rot=rot, **kwargs)
+        assert float(width_details(tg)._values[0]) == pytest.approx(
+            gw, abs=0.03)
+        assert float(height_details(tg)._values[0]) == pytest.approx(
+            gh, abs=0.03)
+
+    def test_bounds_in_nested_viewport(self):
+        # R gold: W=1.51, H=1.72 inside vp(x=.1, y=.1, w=.6, h=.8, lb)
+        from grid_py._size import height_details, width_details
+        grid_newpage(width=5.0, height=5.0, dpi=100)
+        g.push_viewport(g.Viewport(x=0.1, y=0.1, width=0.6, height=0.8,
+                                   just=("left", "bottom")))
+        tg = g.text_grob(["one", "two"], x=[0.3, 0.7], y=[0.3, 0.7])
+        assert float(width_details(tg)._values[0]) == pytest.approx(
+            1.51, abs=0.03)
+        assert float(height_details(tg)._values[0]) == pytest.approx(
+            1.72, abs=0.03)
+        g.pop_viewport()
+
+
 class TestEdgeGeometryUnits:
     """Unit tests of the ported grid.c geometry helpers."""
 

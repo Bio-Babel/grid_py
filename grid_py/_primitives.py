@@ -1494,7 +1494,7 @@ def text_grob(
     just: Union[str, Sequence[str]] = "centre",
     hjust: Optional[float] = None,
     vjust: Optional[float] = None,
-    rot: float = 0,
+    rot: Union[float, Sequence[float]] = 0,
     check_overlap: bool = False,
     name: Optional[str] = None,
     gp: Optional[Gpar] = None,
@@ -1540,10 +1540,15 @@ def text_grob(
     """
     x = _ensure_unit(x, default_units)
     y = _ensure_unit(y, default_units)
+    # R validDetails.text: rot is a numeric VECTOR, recycled per placement
+    rot_arr = np.atleast_1d(np.asarray(rot, dtype=np.float64))
+    if rot_arr.size == 0 or not np.all(np.isfinite(rot_arr)):
+        raise ValueError("invalid 'rot' value")
+    rot_val: Any = float(rot_arr[0]) if rot_arr.size == 1 else rot_arr
     return Grob(
         label=label, x=x, y=y,
         just=just, hjust=hjust, vjust=vjust,
-        rot=float(rot), check_overlap=bool(check_overlap),
+        rot=rot_val, check_overlap=bool(check_overlap),
         name=name, gp=gp, vp=vp, _grid_class="text",
     )
 
@@ -1556,7 +1561,7 @@ def grid_text(
     just: Union[str, Sequence[str]] = "centre",
     hjust: Optional[float] = None,
     vjust: Optional[float] = None,
-    rot: float = 0,
+    rot: Union[float, Sequence[float]] = 0,
     check_overlap: bool = False,
     name: Optional[str] = None,
     gp: Optional[Gpar] = None,

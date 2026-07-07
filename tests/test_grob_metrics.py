@@ -53,13 +53,33 @@ class TestTextGrobMetrics:
         w_large = width_details(text_grob("X", gp=Gpar(fontsize=24)))
         assert w_large._values[0] > w_small._values[0]
 
-    def test_width_multiple_labels_takes_max(self):
+    def test_width_multiple_labels_scalar_position(self):
+        # R gridText loops max(len(x), len(y)) placements, recycling
+        # labels INTO that count: with the default scalar position only
+        # the FIRST label is measured.  R 4.4.3 gold:
+        # grobWidth(textGrob(c("Hi", "Hello World"))) ==
+        # grobWidth(textGrob("Hi"))
         tg = text_grob(["Hi", "Hello World"])
         w = width_details(tg)
         assert w._units[0] == "inches"
-        # Max should be width of "Hello World"
-        w_single = width_details(text_grob("Hello World"))
-        assert w._values[0] == pytest.approx(w_single._values[0], abs=1e-6)
+        w_first = width_details(text_grob("Hi"))
+        assert w._values[0] == pytest.approx(w_first._values[0], abs=1e-6)
+
+    def test_width_multiple_labels_includes_positions(self):
+        # R bounds are the union of every placement's box (C_textBounds):
+        # spread of the anchors plus half a box on each side
+        from grid_py._draw import grid_newpage
+        from grid_py._size import _gp_text_params, _text_label_extent
+        from grid_py._size import _resolve_grob_gp
+        grid_newpage(width=5.0, height=5.0, dpi=100)
+        tg = text_grob(["one", "two"], x=[0.3, 0.7], y=[0.5, 0.5])
+        gp = _resolve_grob_gp(tg)
+        cex, lineheight, fontsize = _gp_text_params(gp)
+        w1, _ = _text_label_extent("one", gp, cex, lineheight, fontsize)
+        w2, _ = _text_label_extent("two", gp, cex, lineheight, fontsize)
+        expected = (0.7 - 0.3) * 5.0 + w1 / 2 + w2 / 2
+        w = width_details(tg)
+        assert w._values[0] == pytest.approx(expected, abs=1e-9)
 
     def test_width_empty_string(self):
         w = width_details(text_grob(""))

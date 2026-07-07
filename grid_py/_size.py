@@ -234,8 +234,12 @@ def _resolve_grob_gp(grob: Any) -> "Optional[Gpar]":
 def _text_bbox(grob: Any) -> tuple:
     """Compute (width, height) of the text bounding box in inches.
 
-    Ports R's ``heightDetails.text`` / ``widthDetails.text`` (grid's
-    ``primitives.R:1430-1452``) — R's ``grobHeight`` on a text grob
+    Port of R's ``widthDetails.text`` / ``heightDetails.text``
+    (primitives.R:1430-1452) → ``C_textBounds``: the union of every
+    placement's justified+rotated label box INCLUDING the anchor
+    positions (see ``_text_placement_corners``).
+
+    R's ``grobHeight`` on a text grob
     returns the **ascent only** (glyph extent above baseline), never
     the descent. ``grobDescent`` is a separate method (see
     ``descentDetails.text``) and is exposed independently so that
@@ -275,66 +279,12 @@ def _text_bbox(grob: Any) -> tuple:
     The grob's gp is merged with the current viewport stack gpar, so
     ``grobHeight`` inherits fontsize / lineheight from the viewport.
     """
-    import math
-    labels = _normalise_labels(grob)
-    gp = _resolve_grob_gp(grob)
-    rot = float(getattr(grob, "rot", 0.0))
-
-    if not labels:
+    quads = _text_placement_corners(grob)
+    if quads is None:
         return (0.0, 0.0)
-
-    # Resolve cex and lineheight; fontsize is read per-line by calc_string_metric.
-    cex = 1.0
-    lineheight = 1.2
-    fontsize = 12.0
-    if gp is not None:
-        fs = gp.get("fontsize", None)
-        if fs is not None:
-            fontsize = float(fs[0] if isinstance(fs, (list, tuple)) else fs)
-        cx = gp.get("cex", None)
-        if cx is not None:
-            cex = float(cx[0] if isinstance(cx, (list, tuple)) else cx)
-        lh = gp.get("lineheight", None)
-        if lh is not None:
-            lineheight = float(lh[0] if isinstance(lh, (list, tuple)) else lh)
-
-    # Per-extra-line gap in inches — matches R's ``cra[1] × ipr[1] / default_ps``
-    # collapsed for the standard device (= fontsize × 1.2 / 72).
-    xmin = float("inf")
-    xmax = float("-inf")
-    ymin = float("inf")
-    ymax = float("-inf")
-
-    for lab in labels:
-        w, h = _text_label_extent(lab, gp, cex, lineheight, fontsize)
-
-        if rot == 0.0:
-            # No rotation: bbox is just the text extent
-            corners_x = [0, w, w, 0]
-            corners_y = [0, 0, h, h]
-        else:
-            rad = math.radians(rot)
-            cos_r = math.cos(rad)
-            sin_r = math.sin(rad)
-            # Four corners of the unrotated text rectangle
-            corners = [(0, 0), (w, 0), (w, h), (0, h)]
-            corners_x = [cx_ * cos_r - cy_ * sin_r for cx_, cy_ in corners]
-            corners_y = [cx_ * sin_r + cy_ * cos_r for cx_, cy_ in corners]
-
-        for cx_ in corners_x:
-            if cx_ < xmin:
-                xmin = cx_
-            if cx_ > xmax:
-                xmax = cx_
-        for cy_ in corners_y:
-            if cy_ < ymin:
-                ymin = cy_
-            if cy_ > ymax:
-                ymax = cy_
-
-    if xmin == float("inf"):
-        return (0.0, 0.0)
-    return (xmax - xmin, ymax - ymin)
+    xs = [c for q in quads for c in q[0]]
+    ys = [c for q in quads for c in q[1]]
+    return (max(xs) - min(xs), max(ys) - min(ys))
 
 
 def _text_width_details(grob: Any) -> Unit:
@@ -1663,34 +1613,8 @@ def _text_label_extent(label: str, gp: Any, cex: float, lineheight: float,
     return (w, h)
 
 
-def _edge_text(grob: Any, theta: float) -> Optional[tuple]:
-    """Edge of a text grob (rotated per-label boxes).
-
-    Port of ``gridText`` with ``draw=FALSE`` (grid.c:3777-3826) plus
-    ``textRect`` (util.c:178-260): a single label gets ``polygonEdge``
-    on its box corners, several labels the union-bbox ``rectEdge``.
-    """
-    from ._just import resolve_hjust, resolve_vjust
-    from ._units import Unit as _U
-    renderer = _get_renderer()
-    if renderer is None:
-        return None
-    labels = _normalise_labels(grob)
-    if not labels:
-        return None
-    x_u = getattr(grob, "x", None)
-    y_u = getattr(grob, "y", None)
-    if not isinstance(x_u, _U) or not isinstance(y_u, _U):
-        return None
-    gp = _resolve_grob_gp(grob)
-    just = getattr(grob, "just", None)
-    if just is None:
-        just = "centre"
-    hj = float(resolve_hjust(just, getattr(grob, "hjust", None)))
-    vj = float(resolve_vjust(just, getattr(grob, "vjust", None)))
-    rots = np.atleast_1d(np.asarray(getattr(grob, "rot", 0.0),
-                                    dtype=np.float64))
-
+def _gp_text_params(gp: Any) -> tuple:
+    """(cex, lineheight, fontsize) from gpar, with R defaults."""
     cex = 1.0
     lineheight = 1.2
     fontsize = 12.0
@@ -1704,17 +1628,59 @@ def _edge_text(grob: Any, theta: float) -> Optional[tuple]:
         lh = gp.get("lineheight", None)
         if lh is not None:
             lineheight = float(lh[0] if isinstance(lh, (list, tuple)) else lh)
+    return (cex, lineheight, fontsize)
 
-    nx = max(len(x_u), len(y_u))
-    if nx == 0:
+
+def _text_placement_corners(grob: Any) -> Optional[list]:
+    """Corner quads of every text placement, in inches.
+
+    Port of the placement loop shared by ``gridText`` with ``draw=FALSE``
+    (grid.c:3746-3826) and ``textRect`` (util.c:178-260): one placement
+    per ``max(len(x), len(y))`` — R recycles labels and rot into the
+    anchor count, NOT the other way around — each with the recycled
+    label's box justified, rotated, then translated to its anchor.
+    Placements with non-finite anchors are dropped.  Returns a list of
+    ``(cx4, cy4)`` quads (anti-clockwise bl, br, tr, tl), or ``None``
+    when there is nothing to measure.
+
+    Without an active renderer, anchors resolve to (0, 0) so the result
+    degenerates to metric-only boxes (keeps device-less callers of the
+    width/height details working; R always has a device).
+    """
+    from ._just import resolve_hjust, resolve_vjust
+    from ._units import Unit as _U
+
+    labels = _normalise_labels(grob)
+    if not labels:
         return None
-    xmin = ymin = float("inf")
-    xmax = ymax = float("-inf")
-    edge = None
-    ntxt = 0
+    gp = _resolve_grob_gp(grob)
+    just = getattr(grob, "just", None)
+    if just is None:
+        just = "centre"
+    hj = float(resolve_hjust(just, getattr(grob, "hjust", None)))
+    vj = float(resolve_vjust(just, getattr(grob, "vjust", None)))
+    rots = np.atleast_1d(np.asarray(getattr(grob, "rot", 0.0),
+                                    dtype=np.float64))
+    cex, lineheight, fontsize = _gp_text_params(gp)
+
+    renderer = _get_renderer()
+    x_u = getattr(grob, "x", None)
+    y_u = getattr(grob, "y", None)
+    has_anchors = (isinstance(x_u, _U) and isinstance(y_u, _U)
+                   and len(x_u) > 0 and len(y_u) > 0)
+    nx = max(len(x_u), len(y_u)) if has_anchors else len(labels)
+
+    quads = []
     for i in range(nx):
-        xx = renderer._resolve_to_inches_idx(x_u, i % len(x_u), "x", False, gp)
-        yy = renderer._resolve_to_inches_idx(y_u, i % len(y_u), "y", False, gp)
+        if has_anchors and renderer is not None:
+            xx = renderer._resolve_to_inches_idx(
+                x_u, i % len(x_u), "x", False, gp)
+            yy = renderer._resolve_to_inches_idx(
+                y_u, i % len(y_u), "y", False, gp)
+        else:
+            xx = yy = 0.0
+        if not (np.isfinite(xx) and np.isfinite(yy)):
+            continue
         w, h = _text_label_extent(labels[i % len(labels)], gp,
                                   cex, lineheight, fontsize)
         # textRect corners, anti-clockwise (bl, br, tr, tl) with sign
@@ -1741,20 +1707,38 @@ def _edge_text(grob: Any, theta: float) -> Optional[tuple]:
             jy = py - vj * h
             cx_pts.append(jx * cos_r - jy * sin_r + xx)
             cy_pts.append(jx * sin_r + jy * cos_r + yy)
-        if np.isfinite(xx) and np.isfinite(yy):
-            xmin = min(xmin, *cx_pts)
-            xmax = max(xmax, *cx_pts)
-            ymin = min(ymin, *cy_pts)
-            ymax = max(ymax, *cy_pts)
-            # polygonEdge needs CLOCKWISE order: tl, tr, br, bl
-            edge = _polygon_edge(
-                [cx_pts[3], cx_pts[2], cx_pts[1], cx_pts[0]],
-                [cy_pts[3], cy_pts[2], cy_pts[1], cy_pts[0]],
-                theta)
-            ntxt += 1
-    if ntxt == 0:
+        quads.append((cx_pts, cy_pts))
+    return quads or None
+
+
+def _edge_text(grob: Any, theta: float) -> Optional[tuple]:
+    """Edge of a text grob (rotated per-label boxes).
+
+    Port of ``gridText`` with ``draw=FALSE`` (grid.c:3777-3826): a
+    single placement gets ``polygonEdge`` on its box corners, several
+    placements the union-bbox ``rectEdge``.
+    """
+    if _get_renderer() is None:
         return None
-    if ntxt > 1:
+    quads = _text_placement_corners(grob)
+    if quads is None:
+        return None
+    xmin = ymin = float("inf")
+    xmax = ymax = float("-inf")
+    edge = None
+    for cx_pts, cy_pts in quads:
+        xmin = min(xmin, *cx_pts)
+        xmax = max(xmax, *cx_pts)
+        ymin = min(ymin, *cy_pts)
+        ymax = max(ymax, *cy_pts)
+        # polygonEdge needs CLOCKWISE order: tl, tr, br, bl; like R it
+        # runs for every placement (and may raise) even when the union
+        # rectEdge supersedes it below
+        edge = _polygon_edge(
+            [cx_pts[3], cx_pts[2], cx_pts[1], cx_pts[0]],
+            [cy_pts[3], cy_pts[2], cy_pts[1], cy_pts[0]],
+            theta)
+    if len(quads) > 1:
         edge = _rect_edge(xmin, ymin, xmax, ymax, theta)
     return edge
 
