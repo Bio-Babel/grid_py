@@ -52,15 +52,19 @@ __all__ = [
 ]
 
 # ---------------------------------------------------------------------------
-# Module-level display list (shared with _primitives)
+# Drawing helper (same as _primitives._grid_draw)
 # ---------------------------------------------------------------------------
-
-_display_list: List[Grob] = []
 
 
 def _grid_draw(grob: Grob) -> None:
-    """Append *grob* to the module-level display list."""
-    _display_list.append(grob)
+    """Draw *grob* immediately via the central dispatcher.
+
+    Mirrors R's ``grid.draw()`` call inside ``grid.curve()`` /
+    ``grid.xspline()`` / ``grid.bezier()``.
+    """
+    from ._draw import grid_draw  # lazy import to avoid circular dependency
+
+    grid_draw(grob, recording=True)
 
 
 # ---------------------------------------------------------------------------
@@ -553,54 +557,77 @@ def _calc_xspline_points(
     shape: Union[float, NDArray[np.float64]] = 0.0,
     open_: bool = True,
     repEnds: bool = True,
+    units_per_inch: float = 1.0,
+    device_size_in: Optional[Tuple[float, float]] = None,
 ) -> Tuple[NDArray[np.float64], NDArray[np.float64]]:
     """Evaluate an X-spline through the given control points.
 
-    Faithful port of R's ``src/main/xspline.c`` (itself derived from
-    XFig 3.2.4, which in turn implements the Blanc & Schlick 1995
-    X-spline model verbatim).  The per-point ``shape`` parameter is in
-    ``[-1, 1]`` with the standard interpretation:
+    Faithful port of R's ``GEXspline`` (engine.c:2048-2094) plus
+    ``src/main/xspline.c`` (itself derived from XFig 3.2.4, which
+    implements the Blanc & Schlick 1995 X-spline model verbatim).  The
+    per-point ``shape`` parameter is in ``[-1, 1]`` with the standard
+    interpretation:
 
-    - ``shape < 0``: "approximating" (B-spline-like)
+    - ``shape < 0``: "interpolating" (curve passes through the point)
     - ``shape = 0``: control point is a sharp corner
-    - ``shape > 0``: "interpolating" (curve passes through)
+    - ``shape > 0``: "approximating" (B-spline-like)
 
     Blending is done with the three polynomial kernels defined in the
     Blanc-Schlick paper — ``f_blend`` (quintic), ``g_blend`` (quintic),
     and ``h_blend`` (quartic).  These are **exact**, not a Catmull-Rom /
     B-spline / linear approximation.
 
+    Like R (``COPY_CONTROL_POINT``, xspline.c:428-433), all internal
+    math runs in xfig's 1200-points-per-inch space so the adaptive step
+    computation samples at the same density as R, then results are
+    converted back to the input units.
+
+    Shapes are used exactly as given: R zeroes the first/last shape of
+    each *open* spline at grob-validation time (``validDetails.xspline``,
+    primitives.R:794-803), NOT inside the engine — build grobs through
+    :func:`xspline_grob` to get that behaviour.
+
     Parameters
     ----------
     x, y : ndarray
-        Control-point coordinates (inches, device, or any linear unit).
+        Control-point coordinates in any linear unit.
     shape : float or ndarray
         Per-control-point shape parameter(s) in ``[-1, 1]``.  Scalar is
-        broadcast to all points.
+        broadcast; a short vector is recycled (R engine recycles with
+        ``s[j % length(s)]``, grid.c:2440).
     open_ : bool
         Open (True) or closed (False) spline.
     repEnds : bool
         For open splines, replicate the first and last control points so
         the curve passes through the endpoints.  Matches R's ``repEnds``.
+    units_per_inch : float
+        How many input units make one inch (1.0 for inches input;
+        ``renderer._dev_units_per_inch`` for device coordinates).
+    device_size_in : tuple of float or None
+        ``(width, height)`` of the device in inches, used for R's
+        step-count clamp at the device diagonal (xspline.c:311-327).
+        ``None`` disables the clamp (points far off-device then sample
+        more densely than R would).
 
     Returns
     -------
     tuple of ndarray
-        ``(x_pts, y_pts)`` evaluated spline coordinates.
+        ``(x_pts, y_pts)`` evaluated spline coordinates in input units.
 
     References
     ----------
     Blanc, C. and Schlick, C. (1995).  X-splines: A spline model designed
     for the end-user.  *Proceedings of SIGGRAPH 95*, pp. 377-386.
 
-    R implementation: ``src/main/xspline.c``.
+    R implementation: ``src/main/xspline.c`` + ``engine.c GEXspline``.
     """
     x = np.asarray(x, dtype=np.float64)
     y = np.asarray(y, dtype=np.float64)
     n = len(x)
 
-    if n < 2:
-        return x.copy(), y.copy()
+    if not (np.all(np.isfinite(x)) and np.all(np.isfinite(y))):
+        # R grid.c:2465-2467 raises for both the draw and bounds paths
+        raise ValueError("non-finite control point in Xspline")
 
     if np.isscalar(shape):
         s = np.full(n, float(shape), dtype=np.float64)
@@ -608,31 +635,34 @@ def _calc_xspline_points(
         s = np.asarray(shape, dtype=np.float64)
         if len(s) < n:
             s = np.resize(s, n)
-    s = np.clip(s, -1.0, 1.0)
 
-    # R forces the first and last control points' shape to 0 for OPEN
-    # xsplines (primitives.R:795-803 ``validDetails.xspline``).  This
-    # makes the curve pass exactly through the endpoints: at shape=0,
-    # ``positive_s1/s2_influence`` at ``t=0`` reduces to ``A1=1`` and
-    # all other weights 0, so the blend resolves to the (duplicated)
-    # first control point.  Without this, open splines with nonzero
-    # end shapes do not land on the endpoints.
-    if open_ and n >= 1:
-        s = s.copy()
-        s[0] = 0.0
-        s[-1] = 0.0
+    # R converts device coordinates to xfig's 1200ppi space before any
+    # spline math (COPY_CONTROL_POINT) and back on output (add_point).
+    to_1200 = 1200.0 / float(units_per_inch)
+    x1200 = x * to_1200
+    y1200 = y * to_1200
 
-    # R's precision parameter (LOW_PRECISION=1.0 is the default for
-    # ``GEXspline``).  Step size is derived adaptively from segment
-    # geometry (see ``_xsp_step``).
+    # Device-diagonal clamp for the step computation (xspline.c:311-327).
+    if device_size_in is not None:
+        dev_w = device_size_in[0] * 1200.0
+        dev_h = device_size_in[1] * 1200.0
+        dev_diag_1200 = math.sqrt(dev_w * dev_w + dev_h * dev_h)
+    else:
+        dev_diag_1200 = math.inf
+
+    # R's precision parameter (LOW_PRECISION=1.0 is what ``GEXspline``
+    # passes).  Step size is derived adaptively from segment geometry
+    # (see ``_xsp_step``).
     precision = 1.0
 
     if open_:
-        out_x, out_y = _xsp_compute_open(x, y, s, repEnds, precision)
+        out_x, out_y = _xsp_compute_open(x1200, y1200, s, repEnds,
+                                         precision, dev_diag_1200)
     else:
-        out_x, out_y = _xsp_compute_closed(x, y, s, precision)
+        out_x, out_y = _xsp_compute_closed(x1200, y1200, s,
+                                           precision, dev_diag_1200)
 
-    return out_x, out_y
+    return out_x / to_1200, out_y / to_1200
 
 
 # -- Blanc-Schlick polynomial blending kernels ------------------------------
@@ -723,12 +753,17 @@ _MAX_SPLINE_STEP = 0.2
 
 
 def _xsp_step(k: int, px: Tuple[float, ...], py: Tuple[float, ...],
-              s1: float, s2: float, precision: float) -> float:
-    """Port of R's ``step_computing`` — adaptive step based on curve extent.
+              s1: float, s2: float, precision: float,
+              dev_diag_1200: float = math.inf) -> float:
+    """Port of R's ``step_computing`` (xspline.c:224-341).
 
     The step is chosen so the polyline sampling resolution matches the
-    physical distance from segment origin to extremity, augmented by a
-    curvature term (cosine of the origin-mid-extremity angle).
+    physical distance from segment origin to extremity (in 1200ppi
+    units), augmented by a curvature term (cosine of the
+    origin-mid-extremity angle).  ``dev_diag_1200`` is the device
+    diagonal in 1200ppi units: R clamps the distance there so control
+    points far off-device do not produce "ridiculously many steps"
+    (xspline.c:311-327).
     """
     if s1 == 0.0 and s2 == 0.0:
         return 1.0  # linear segment
@@ -781,21 +816,18 @@ def _xsp_step(k: int, px: Tuple[float, ...], py: Tuple[float, ...],
 
     xlen = xend - xstart
     ylen = yend - ystart
-    dist = math.sqrt(xlen * xlen + ylen * ylen)
+    start_to_end_dist = math.sqrt(xlen * xlen + ylen * ylen)
 
-    # R (via XFig) does all step math in 1200 ppi units.  Our coordinates
-    # are in whatever linear unit the caller passed (usually inches), so
-    # scale by 1200 here to reproduce R's sampling density.  Downstream
-    # output coordinates are unaffected — only the step count changes.
-    dist = dist * 1200.0
+    # Coordinates are already in 1200ppi units (converted by
+    # ``_calc_xspline_points``, mirroring R's COPY_CONTROL_POINT).
+    # Clamp remote origin/extremity pairs at the device diagonal
+    # (xspline.c:311-327, "Paul 2009-01-25").
+    if start_to_end_dist > dev_diag_1200:
+        start_to_end_dist = dev_diag_1200
 
-    # R's diagonal clamp (xspline.c:312-325) avoids runaway sampling when
-    # control points are far outside the device; we approximate it with a
-    # fixed cap equivalent to ~1.7 inches × 1200 diagonal.
-    if dist > 2000.0:
-        dist = 2000.0
-
-    n_steps = math.sqrt(dist) / 2.0
+    # more steps if segment's origin and extremity are remote
+    n_steps = math.sqrt(start_to_end_dist) / 2.0
+    # more steps if the curve is high
     n_steps += int((1.0 + angle_cos) * 10.0)
     step = 1.0 if n_steps == 0 else precision / n_steps
     if step > _MAX_SPLINE_STEP or step == 0.0:
@@ -811,16 +843,18 @@ def _xsp_segment(step: float, k: int,
                  out_x: List[float], out_y: List[float]) -> None:
     """Port of ``spline_segment_computing`` — sample segment over ``t ∈ [0, 1)``.
 
-    Emits points into ``out_x`` / ``out_y`` with de-duplication against the
-    last emitted point (matches R's ``add_point`` which skips repeats).
+    Every sample is appended unconditionally.  R's ``add_point`` has a
+    "skip identical point" check, but it compares the stored *device*
+    coordinate against the incoming *1200ppi* coordinate (xspline.c:81-87)
+    so it effectively never fires; duplicate points are instead trimmed
+    from the two ENDS by the grid.c layer (see ``_trim_identical_ends``).
     """
     t = 0.0
     while t < 1.0:
         A = _xsp_weights(k, t, s1, s2)
         bx, by = _xsp_point(A, px, py)
-        if not out_x or out_x[-1] != bx or out_y[-1] != by:
-            out_x.append(bx)
-            out_y.append(by)
+        out_x.append(bx)
+        out_y.append(by)
         t += step
 
 
@@ -831,17 +865,22 @@ def _xsp_last_segment(step: float, k: int,
     """Port of ``spline_last_segment_computing`` — one point at t=1."""
     A = _xsp_weights(k, 1.0, s1, s2)
     bx, by = _xsp_point(A, px, py)
-    if not out_x or out_x[-1] != bx or out_y[-1] != by:
-        out_x.append(bx)
-        out_y.append(by)
+    out_x.append(bx)
+    out_y.append(by)
 
 
 # -- Open / closed drivers (xspline.c:455-547) ------------------------------
 
 def _xsp_compute_open(
     x: NDArray[np.float64], y: NDArray[np.float64], s: NDArray[np.float64],
-    repEnds: bool, precision: float,
+    repEnds: bool, precision: float, dev_diag_1200: float = math.inf,
 ) -> Tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Port of ``compute_open_spline`` (xspline.c:459-521).
+
+    Returns the raw evaluated points; duplicate-end trimming is a
+    separate, caller-level concern (grid.c:2475-2504, see
+    ``_trim_identical_ends``).
+    """
     n = len(x)
     if repEnds and n < 2:
         raise ValueError("there must be at least two control points")
@@ -860,12 +899,13 @@ def _xsp_compute_open(
 
         k = 0
         while True:
-            step = _xsp_step(k, px, py, ps[1], ps[2], precision)
+            step = _xsp_step(k, px, py, ps[1], ps[2], precision,
+                             dev_diag_1200)
             _xsp_segment(step, k, tuple(px), tuple(py), ps[1], ps[2],
                          out_x, out_y)
             if k + 3 >= n:
                 break
-            # R's ``NEXT_CONTROL_POINTS(K, N)`` macro (xspline.c:438-442):
+            # R's ``NEXT_CONTROL_POINTS(K, N)`` macro (xspline.c:435-439):
             # ``px[0] = x[K % N]``, ``px[1] = x[(K+1) % N]``, etc.  K is the
             # CURRENT segment index — not incremented before indexing.  Note
             # this is why the sliding window overlaps between iterations.
@@ -883,14 +923,13 @@ def _xsp_compute_open(
             px = [x[n - 3], x[n - 2], x[n - 1], x[n - 1]]
             py = [y[n - 3], y[n - 2], y[n - 1], y[n - 1]]
             ps = [s[n - 3], s[n - 2], s[n - 1], s[n - 1]]
-        step = _xsp_step(k, px, py, ps[1], ps[2], precision)
+        step = _xsp_step(k, px, py, ps[1], ps[2], precision, dev_diag_1200)
         _xsp_segment(step, k, tuple(px), tuple(py), ps[1], ps[2],
                      out_x, out_y)
 
-        # Final point: px[3], py[3] (xspline.c:510)
-        if not out_x or out_x[-1] != px[3] or out_y[-1] != py[3]:
-            out_x.append(float(px[3]))
-            out_y.append(float(py[3]))
+        # Final point: add_point(px[3], py[3]) (xspline.c:507)
+        out_x.append(float(px[3]))
+        out_y.append(float(py[3]))
     else:
         # repEnds=False: no endpoint replication.  Exactly n-3 segments,
         # then one final-segment t=1 point.
@@ -899,10 +938,11 @@ def _xsp_compute_open(
             px = [x[k], x[k + 1], x[k + 2], x[k + 3]]
             py = [y[k], y[k + 1], y[k + 2], y[k + 3]]
             ps = [s[k], s[k + 1], s[k + 2], s[k + 3]]
-            step = _xsp_step(k, px, py, ps[1], ps[2], precision)
+            step = _xsp_step(k, px, py, ps[1], ps[2], precision,
+                             dev_diag_1200)
             _xsp_segment(step, k, tuple(px), tuple(py), ps[1], ps[2],
                          out_x, out_y)
-        # Last segment's t=1 evaluation (xspline.c:516)
+        # Last segment's t=1 evaluation (xspline.c:513)
         k = n - 4
         px = [x[k], x[k + 1], x[k + 2], x[k + 3]]
         py = [y[k], y[k + 1], y[k + 2], y[k + 3]]
@@ -910,24 +950,18 @@ def _xsp_compute_open(
         _xsp_last_segment(step, k, tuple(px), tuple(py), ps[1], ps[2],
                           out_x, out_y)
 
-    # R trims leading / trailing duplicate points (grid.c:2494-2504).
-    # We emulate that: remove consecutive duplicates at start only
-    # (trailing dedup already happens in _xsp_segment's emit).
-    while len(out_x) > 1 and out_x[0] == out_x[1] and out_y[0] == out_y[1]:
-        out_x.pop(0)
-        out_y.pop(0)
-
     return (np.asarray(out_x, dtype=np.float64),
             np.asarray(out_y, dtype=np.float64))
 
 
 def _xsp_compute_closed(
     x: NDArray[np.float64], y: NDArray[np.float64], s: NDArray[np.float64],
-    precision: float,
+    precision: float, dev_diag_1200: float = math.inf,
 ) -> Tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """Port of ``compute_closed_spline`` (xspline.c:523-549)."""
     n = len(x)
     if n < 3:
-        raise ValueError("there must be at least three control points")
+        raise ValueError("There must be at least three control points")
 
     out_x: List[float] = []
     out_y: List[float] = []
@@ -939,11 +973,13 @@ def _xsp_compute_closed(
     ps = [s[i] for i in idx]
 
     for k in range(n):
-        step = _xsp_step(k, px, py, ps[1], ps[2], precision)
+        step = _xsp_step(k, px, py, ps[1], ps[2], precision, dev_diag_1200)
         _xsp_segment(step, k, tuple(px), tuple(py), ps[1], ps[2],
                      out_x, out_y)
-        # NEXT_CONTROL_POINTS(K, N): (K..K+3) mod n
-        idx = [(k + 1) % n, (k + 2) % n, (k + 3) % n, (k + 4) % n]
+        # NEXT_CONTROL_POINTS(K, N) with the CURRENT k: (K..K+3) mod n —
+        # segment k+1 then blends window (k, k+1, k+2, k+3), i.e. the n
+        # windows are (n-1,0,1,2), (0,1,2,3), ..., (n-2,n-1,0,1).
+        idx = [k % n, (k + 1) % n, (k + 2) % n, (k + 3) % n]
         px = [x[i] for i in idx]
         py = [y[i] for i in idx]
         ps = [s[i] for i in idx]
@@ -953,52 +989,70 @@ def _xsp_compute_closed(
 
 
 # ===================================================================== #
-#  Internal: Bezier point calculation (de Casteljau)                     #
+#  Internal: shared xspline helpers (trim / index / device size)         #
 # ===================================================================== #
 
 
-def _calc_bezier_points(
-    x: NDArray[np.float64],
-    y: NDArray[np.float64],
-    n: int = 50,
+def _trim_identical_ends(
+    xs: NDArray[np.float64], ys: NDArray[np.float64],
 ) -> Tuple[NDArray[np.float64], NDArray[np.float64]]:
-    """Evaluate a Bezier curve using the de Casteljau algorithm.
+    """Trim runs of identical points from both ENDS of a point list.
 
-    Parameters
-    ----------
-    x, y : ndarray
-        Control-point coordinates.  Typically 4 points for a cubic
-        Bezier, but any number >= 2 is accepted.
-    n : int
-        Number of evaluation points along the curve.
-
-    Returns
-    -------
-    tuple of ndarray
-        ``(x_pts, y_pts)`` evaluated Bezier curve coordinates.
+    Port of the "trim identical points from the ends (so arrow heads are
+    drawn at correct angle)" block in ``gridXspline`` (grid.c:2475-2504).
+    Interior duplicates are kept, exactly like R.
     """
-    x = np.asarray(x, dtype=np.float64)
-    y = np.asarray(y, dtype=np.float64)
-    npts = len(x)
+    np_count = len(xs)
+    start = 0
+    end = np_count - 1
+    while (np_count > 1 and xs[start] == xs[start + 1]
+           and ys[start] == ys[start + 1]):
+        start += 1
+        np_count -= 1
+    while (np_count > 1 and xs[end] == xs[end - 1]
+           and ys[end] == ys[end - 1]):
+        end -= 1
+        np_count -= 1
+    return xs[start:end + 1], ys[start:end + 1]
 
-    if npts < 2:
-        return x.copy(), y.copy()
 
-    t_vals = np.linspace(0.0, 1.0, n)
-    out_x = np.empty(n, dtype=np.float64)
-    out_y = np.empty(n, dtype=np.float64)
+def _xspline_index(x: Grob) -> List[NDArray[np.intp]]:
+    """Per-spline control-point index groups (0-based).
 
-    for k, t in enumerate(t_vals):
-        # de Casteljau
-        bx = x.copy()
-        by = y.copy()
-        for r in range(1, npts):
-            bx[:npts - r] = (1 - t) * bx[:npts - r] + t * bx[1:npts - r + 1]
-            by[:npts - r] = (1 - t) * by[:npts - r] + t * by[1:npts - r + 1]
-        out_x[k] = bx[0]
-        out_y[k] = by[0]
+    Port of R ``xsplineIndex`` (primitives.R:807-820): one index vector
+    per spline, derived from ``id`` (split by value, ascending) or
+    ``id_lengths`` (consecutive runs); a single full-range group when
+    neither is given.
+    """
+    n = len(x.x)
+    id_ = getattr(x, "id", None)
+    id_lengths = getattr(x, "id_lengths", None)
+    if id_ is None and id_lengths is None:
+        return [np.arange(n, dtype=np.intp)]
+    if id_ is None:
+        lengths = np.atleast_1d(np.asarray(id_lengths, dtype=np.intp))
+        id_vec = np.repeat(np.arange(1, len(lengths) + 1), lengths)
+    else:
+        id_vec = np.atleast_1d(np.asarray(id_, dtype=np.intp))
+    return [np.flatnonzero(id_vec == uid) for uid in np.unique(id_vec)]
 
-    return out_x, out_y
+
+def _device_size_in() -> Tuple[float, float]:
+    """Current device ``(width, height)`` in inches.
+
+    R equivalent: ``fromDeviceWidth(toDeviceWidth(1, GE_NDC, dd),
+    GE_INCHES, dd)`` in ``step_computing`` (xspline.c:317-320).  Falls
+    back to the grid state's device dimensions when no renderer is
+    active (R always has a device open, so only the renderer branch has
+    an R analogue).
+    """
+    from ._state import get_state
+
+    state = get_state()
+    renderer = state.get_renderer()
+    if renderer is not None:
+        return float(renderer.width_in), float(renderer.height_in)
+    return (state._device_width_cm / 2.54, state._device_height_cm / 2.54)
 
 
 # ===================================================================== #
@@ -1380,9 +1434,57 @@ def grid_curve(
 # ===================================================================== #
 
 
+class _XsplineGrob(Grob):
+    """Grob for ``_grid_class="xspline"``.
+
+    ``valid_details`` ports R ``validDetails.xspline``
+    (primitives.R:772-805).  In particular, the first and last shape of
+    every *open* spline (per ``id`` group) is forced to 0 at validation
+    time, which is what makes open X-splines start and end at their end
+    control points — the engine itself (``_calc_xspline_points``) uses
+    shapes exactly as given, like R's C code.
+    """
+
+    def valid_details(self) -> None:
+        if not is_unit(self.x) or not is_unit(self.y):
+            raise TypeError("x and y must be units")
+        if self.id is not None and self.id_lengths is not None:
+            raise ValueError(
+                "it is invalid to specify both 'id' and 'id.lengths'")
+        nx = len(self.x)
+        ny = len(self.y)
+        if nx != ny:
+            raise ValueError("'x' and 'y' must be same length")
+        if self.id is not None:
+            self.id = np.atleast_1d(np.asarray(self.id, dtype=np.int64))
+            if len(self.id) != nx:
+                raise ValueError(
+                    "'x' and 'y' and 'id' must all be same length")
+        if self.id_lengths is not None:
+            self.id_lengths = np.atleast_1d(
+                np.asarray(self.id_lengths, dtype=np.int64))
+            if int(self.id_lengths.sum()) != nx:
+                raise ValueError(
+                    "'x' and 'y' and 'id.lengths' must specify same "
+                    "overall length")
+        if self.arrow is not None and not isinstance(self.arrow, Arrow):
+            raise TypeError("invalid 'arrow' argument")
+        shape = np.atleast_1d(np.asarray(self.shape, dtype=np.float64))
+        if np.any((shape < -1) | (shape > 1)):
+            raise ValueError("'shape' must be between -1 and 1")
+        self.open_ = bool(self.open_)
+        # Force all first and last shapes to be 0 for open xsplines
+        if self.open_:
+            shape = np.resize(shape, nx)
+            for idx in _xspline_index(self):
+                shape[int(idx.min())] = 0.0
+                shape[int(idx.max())] = 0.0
+        self.shape = shape
+
+
 def xspline_grob(
-    x: Optional[Any] = None,
-    y: Optional[Any] = None,
+    x: Any = (0, 0.5, 1, 0.5),
+    y: Any = (0.5, 1, 0.5, 0),
     id: Optional[Any] = None,
     id_lengths: Optional[Any] = None,
     default_units: str = "npc",
@@ -1401,14 +1503,14 @@ def xspline_grob(
 
     Parameters
     ----------
-    x, y : Unit, numeric, sequence, or None
-        Control-point coordinates.  Defaults to ``Unit([0, 1], "npc")``
-        when ``None``.
+    x, y : Unit, numeric, or sequence
+        Control-point coordinates.  Defaults mirror R's
+        ``xsplineGrob()`` (primitives.R:863).
     id : array-like of int or None
         Group label for each control point.  Points sharing an ``id`` are
         rendered as one X-spline; the grob therefore renders one spline
         per unique ``id`` value.  Mirrors R ``xsplineGrob(id=...)``.
-        Mutually meaningful with ``id_lengths``: pass at most one.
+        Mutually exclusive with ``id_lengths``.
     id_lengths : array-like of int or None
         Run-length encoding of ``id``: the n-th entry is the number of
         consecutive control points belonging to spline n.  Mirrors R's
@@ -1417,7 +1519,9 @@ def xspline_grob(
         Unit type for bare numerics.
     shape : float or sequence of float
         Shape parameter(s) in [-1, 1].  A scalar is broadcast to all
-        control points.
+        control points.  Following R ``validDetails.xspline``, the first
+        and last shape of each open spline is forced to 0 on the created
+        grob.
     open_ : bool
         Whether the spline is open (True) or closed (False).
     arrow : Arrow or None
@@ -1436,32 +1540,21 @@ def xspline_grob(
     Grob
         A grob with ``_grid_class="xspline"``.
     """
-    if x is None:
-        x = Unit([0, 1], "npc")
-    else:
-        x = _ensure_unit(x, default_units)
-    if y is None:
-        y = Unit([0, 1], "npc")
-    else:
-        y = _ensure_unit(y, default_units)
-
-    # Normalise shape to a numpy array
-    shape_arr = np.atleast_1d(np.asarray(shape, dtype=np.float64))
-    if np.any((shape_arr < -1) | (shape_arr > 1)):
-        raise ValueError("all 'shape' values must be between -1 and 1")
+    ux = _ensure_unit(x, default_units)
+    uy = _ensure_unit(y, default_units)
 
     id_arr = None if id is None else np.asarray(id, dtype=np.int64)
     id_lengths_arr = (
         None if id_lengths is None else np.asarray(id_lengths, dtype=np.int64)
     )
 
-    return Grob(
-        x=x,
-        y=y,
+    return _XsplineGrob(
+        x=ux,
+        y=uy,
         id=id_arr,
         id_lengths=id_lengths_arr,
-        shape=shape_arr,
-        open_=bool(open_),
+        shape=shape,
+        open_=open_,
         arrow=arrow,
         repEnds=bool(repEnds),
         name=name,
@@ -1472,8 +1565,8 @@ def xspline_grob(
 
 
 def grid_xspline(
-    x: Optional[Any] = None,
-    y: Optional[Any] = None,
+    x: Any = (0, 0.5, 1, 0.5),
+    y: Any = (0.5, 1, 0.5, 0),
     id: Optional[Any] = None,
     id_lengths: Optional[Any] = None,
     default_units: str = "npc",
@@ -1527,8 +1620,16 @@ def grid_xspline(
     return grob
 
 
-def xspline_points(x: Grob) -> Dict[str, NDArray[np.float64]]:
-    """Extract evaluated X-spline points from an xspline grob.
+def xspline_points(
+    x: Grob,
+) -> Union[Dict[str, NDArray[np.float64]], List[Dict[str, NDArray[np.float64]]]]:
+    """Extract the evaluated X-spline curve from an xspline grob.
+
+    Port of R ``xsplinePoints`` (primitives.R:881-905): enforces the
+    grob's ``vp`` and ``gp`` like ``drawGrob()`` (preDraw/postDraw),
+    converts the control points to inches in that context, evaluates one
+    spline per ``id`` group, and trims runs of identical points from the
+    curve ends (grid.c:2475-2504).
 
     Parameters
     ----------
@@ -1537,9 +1638,13 @@ def xspline_points(x: Grob) -> Dict[str, NDArray[np.float64]]:
 
     Returns
     -------
-    dict
-        Dictionary with keys ``"x"`` and ``"y"``, each an ndarray of
-        evaluated spline coordinates.
+    dict or list of dict
+        For a single spline, a dict with keys ``"x"`` and ``"y"`` holding
+        the evaluated curve coordinates in INCHES (R returns
+        ``unit(..., "inches")``).  For multiple splines (``id`` /
+        ``id_lengths``), a list of such dicts — mirroring R, which
+        returns a list of point sets and unwraps it when there is
+        exactly one.
 
     Raises
     ------
@@ -1549,42 +1654,204 @@ def xspline_points(x: Grob) -> Dict[str, NDArray[np.float64]]:
     if not isinstance(x, Grob) or getattr(x, "_grid_class", None) != "xspline":
         raise TypeError("'x' must be an xspline grob")
 
-    # Extract numeric values from Unit objects
-    ctrl_x = np.asarray(x.x.values if hasattr(x.x, "values") else x.x, dtype=np.float64)
-    ctrl_y = np.asarray(x.y.values if hasattr(x.y, "values") else x.y, dtype=np.float64)
-    shape = x.shape if hasattr(x, "shape") else 0.0
-    open_ = getattr(x, "open_", True)
-    repEnds = getattr(x, "repEnds", True)
+    import copy as _copy
 
-    px, py = _calc_xspline_points(ctrl_x, ctrl_y, shape, open_, repEnds)
-    return {"x": px, "y": py}
+    from ._draw import _pop_grob_vp, _push_vp_gp
+    from ._state import get_state
+
+    state = get_state()
+    # Mimic drawGrob() to ensure x$vp and x$gp enforced (primitives.R:882-887)
+    saved_dl_on = state._dl_on
+    state.set_display_list_on(False)
+    saved_gpar = _copy.copy(state.get_gpar())
+    pushed = False
+    try:
+        _push_vp_gp(x)  # preDraw(x)
+        pushed = True
+
+        xx = np.atleast_1d(np.asarray(
+            convert_x(x.x, "inches", valueOnly=True), dtype=np.float64))
+        yy = np.atleast_1d(np.asarray(
+            convert_y(x.y, "inches", valueOnly=True), dtype=np.float64))
+        # C recycles shape per control-point index (grid.c:2440)
+        shape = np.resize(
+            np.atleast_1d(np.asarray(getattr(x, "shape", 0.0),
+                                     dtype=np.float64)),
+            len(xx))
+        open_ = bool(getattr(x, "open_", True))
+        repEnds = bool(getattr(x, "repEnds", True))
+        device_size = _device_size_in()
+
+        results: List[Dict[str, NDArray[np.float64]]] = []
+        for idx in _xspline_index(x):
+            px, py = _calc_xspline_points(
+                xx[idx], yy[idx], shape[idx], open_, repEnds,
+                units_per_inch=1.0, device_size_in=device_size,
+            )
+            px, py = _trim_identical_ends(px, py)
+            results.append({"x": px, "y": py})
+    finally:
+        # postDraw(x) + state restore
+        if pushed and x.vp is not None:
+            _pop_grob_vp(x.vp)
+        state.replace_gpar(saved_gpar)
+        state.set_display_list_on(saved_dl_on)
+
+    if len(results) == 1:
+        return results[0]
+    return results
 
 
 # ===================================================================== #
 #  bezierGrob / grid.bezier                                              #
 # ===================================================================== #
+#
+# A bezier grob that works off a (not-100% accurate) approximation using
+# X-splines (R primitives.R:906-1028): the four Bezier control points of
+# each curve are mapped through solve(Ms) %*% Mb — cubic-B-spline basis
+# inverse times cubic-Bezier basis — giving X-spline control points, and
+# the result is drawn as an X-spline with shape=1, repEnds=FALSE.
+
+# X-Spline approx to Bezier (R primitives.R:913-917)
+_BEZIER_MS = (1.0 / 6.0) * np.array(
+    [[1, 4, 1, 0],
+     [-3, 0, 3, 0],
+     [3, -6, 3, 0],
+     [-1, 3, -3, 1]], dtype=np.float64)
+# Bezier control matrix (R primitives.R:919-923)
+_BEZIER_MB = np.array(
+    [[1, 0, 0, 0],
+     [-3, 3, 0, 0],
+     [3, -6, 3, 0],
+     [-1, 3, -3, 1]], dtype=np.float64)
+# R: Msinv %*% Mb  (Msinv <- solve(Ms), primitives.R:918)
+_SPLINE_FROM_BEZIER = np.linalg.solve(_BEZIER_MS, _BEZIER_MB)
+
+
+def _spline_points(
+    xb: NDArray[np.float64],
+    yb: NDArray[np.float64],
+    id_index: List[NDArray[np.intp]],
+) -> Tuple[NDArray[np.float64], NDArray[np.float64]]:
+    """X-spline control points from Bezier control points.
+
+    Port of R ``splinePoints`` (primitives.R:925-936): applies
+    ``Msinv %*% Mb`` to each 4-point group.
+    """
+    xs = np.concatenate([_SPLINE_FROM_BEZIER @ xb[i] for i in id_index])
+    ys = np.concatenate([_SPLINE_FROM_BEZIER @ yb[i] for i in id_index])
+    return xs, ys
+
+
+def _splinegrob(x: Grob) -> Grob:
+    """The X-spline grob that draws for a bezier grob.
+
+    Port of R ``splinegrob`` (primitives.R:938-948): control points are
+    converted to inches in the CURRENT viewport context (at draw time
+    that is the bezier grob's own context, because ``make_content`` runs
+    after preDraw has pushed ``vp``/``gp``), transformed per curve, and
+    wrapped in an xspline grob with ``shape=1, repEnds=FALSE``.
+    """
+    xx = np.atleast_1d(np.asarray(
+        convert_x(x.x, "inches", valueOnly=True), dtype=np.float64))
+    yy = np.atleast_1d(np.asarray(
+        convert_y(x.y, "inches", valueOnly=True), dtype=np.float64))
+    sx, sy = _spline_points(xx, yy, _xspline_index(x))
+    return xspline_grob(
+        sx, sy, default_units="inches",
+        id=x.id, id_lengths=x.id_lengths,
+        shape=1, repEnds=False,
+        arrow=x.arrow, name=x.name,
+        gp=x.gp, vp=x.vp,
+    )
+
+
+class _BezierGrob(Grob):
+    """Grob for ``_grid_class="beziergrob"``.
+
+    Mirrors R's beziergrob: a plain grob whose ``make_content`` expands
+    to the X-spline approximation (``makeContent.beziergrob``,
+    primitives.R:985-987) so unit conversion happens in the current
+    viewport context at draw time.
+    """
+
+    def valid_details(self) -> None:
+        # Port of R validDetails.beziergrob (primitives.R:948-983)
+        if not is_unit(self.x) or not is_unit(self.y):
+            raise TypeError("x and y must be units")
+        if self.id is not None and self.id_lengths is not None:
+            raise ValueError(
+                "it is invalid to specify both 'id' and 'id.lengths'")
+        nx = len(self.x)
+        ny = len(self.y)
+        if nx != ny:
+            raise ValueError("'x' and 'y' must be same length")
+        if self.id is not None:
+            self.id = np.atleast_1d(np.asarray(self.id, dtype=np.int64))
+            if len(self.id) != nx:
+                raise ValueError(
+                    "'x' and 'y' and 'id' must all be same length")
+        if self.id_lengths is not None:
+            self.id_lengths = np.atleast_1d(
+                np.asarray(self.id_lengths, dtype=np.int64))
+            if int(self.id_lengths.sum()) != nx:
+                raise ValueError(
+                    "'x' and 'y' and 'id.lengths' must specify same "
+                    "overall length")
+        if self.id is None and self.id_lengths is None:
+            if nx != 4:
+                raise ValueError("must have exactly 4 control points")
+        elif any(len(idx) != 4 for idx in _xspline_index(self)):
+            raise ValueError(
+                "must have exactly 4 control points per Bezier curve")
+        if self.arrow is not None and not isinstance(self.arrow, Arrow):
+            raise TypeError("invalid 'arrow' argument")
+
+    def make_content(self) -> Grob:
+        # Port of R makeContent.beziergrob (primitives.R:985-987)
+        return _splinegrob(self)
+
+    def x_details(self, theta: float = 0.0) -> Any:
+        # Port of R xDetails.beziergrob (primitives.R:989-991)
+        from ._size import x_details
+        return x_details(_splinegrob(self), theta)
+
+    def y_details(self, theta: float = 0.0) -> Any:
+        # Port of R yDetails.beziergrob (primitives.R:993-995)
+        from ._size import y_details
+        return y_details(_splinegrob(self), theta)
 
 
 def bezier_grob(
-    x: Any,
-    y: Any,
+    x: Any = (0, 0.5, 1, 0.5),
+    y: Any = (0.5, 1, 0.5, 0),
+    id: Optional[Any] = None,
+    id_lengths: Optional[Any] = None,
     default_units: str = "npc",
     arrow: Optional[Arrow] = None,
     name: Optional[str] = None,
     gp: Optional[Gpar] = None,
     vp: Optional[Any] = None,
-) -> GTree:
-    """Create a *bezier* grob (GTree).
+) -> Grob:
+    """Create a *bezier* grob.
 
-    A Bezier grob draws a cubic (or higher-order) Bezier curve through
-    the given control points.
+    A Bezier grob draws a cubic Bezier curve through the given control
+    points: the curve interpolates the first and last point of each
+    group of 4 and is attracted toward the middle two.  Like R, the
+    curve is drawn as an X-spline approximation of the Bezier
+    (see ``bezierGrob``, primitives.R:1005-1016), which is close to but
+    not exactly the true Bezier.
 
     Parameters
     ----------
     x, y : Unit or numeric
-        Control-point coordinates.  For a cubic Bezier, supply exactly 4
-        points; the curve interpolates the first and last and is
-        attracted toward the middle two.
+        Control-point coordinates; exactly 4 per curve.  Defaults mirror
+        R's ``bezierGrob()``.
+    id : array-like of int or None
+        Curve label per control point (4 points per label).  Mutually
+        exclusive with ``id_lengths``.
+    id_lengths : array-like of int or None
+        Run-length encoding of ``id``; every entry must be 4.
     default_units : str
         Unit type for bare numerics.
     arrow : Arrow or None
@@ -1598,39 +1865,54 @@ def bezier_grob(
 
     Returns
     -------
-    GTree
-        A grob tree with ``_grid_class="beziergrob"``.
+    Grob
+        A grob with ``_grid_class="beziergrob"`` (like R, a plain grob:
+        the X-spline content is generated at draw time).
     """
     ux = _ensure_unit(x, default_units)
     uy = _ensure_unit(y, default_units)
 
-    return GTree(
+    id_arr = None if id is None else np.asarray(id, dtype=np.int64)
+    id_lengths_arr = (
+        None if id_lengths is None else np.asarray(id_lengths, dtype=np.int64)
+    )
+
+    return _BezierGrob(
         name=name,
         gp=gp,
         vp=vp,
         _grid_class="beziergrob",
         x=ux,
         y=uy,
+        id=id_arr,
+        id_lengths=id_lengths_arr,
         arrow=arrow,
     )
 
 
 def grid_bezier(
-    x: Any,
-    y: Any,
+    x: Any = (0, 0.5, 1, 0.5),
+    y: Any = (0.5, 1, 0.5, 0),
+    id: Optional[Any] = None,
+    id_lengths: Optional[Any] = None,
     default_units: str = "npc",
     arrow: Optional[Arrow] = None,
     name: Optional[str] = None,
     gp: Optional[Gpar] = None,
     draw: bool = True,
     vp: Optional[Any] = None,
-) -> GTree:
+) -> Grob:
     """Create and optionally draw a *bezier* grob.
 
     Parameters
     ----------
     x, y : Unit or numeric
-        Control-point coordinates.
+        Control-point coordinates; exactly 4 per curve.
+    id : array-like of int or None
+        Curve label per control point.  Mutually exclusive with
+        ``id_lengths``.
+    id_lengths : array-like of int or None
+        Run-length encoding of ``id``.
     default_units : str
         Unit type for bare numerics.
     arrow : Arrow or None
@@ -1640,17 +1922,18 @@ def grid_bezier(
     gp : Gpar or None
         Graphical parameters.
     draw : bool
-        If ``True`` (default), record for drawing.
+        If ``True`` (default), draw immediately (and record).
     vp : viewport or None
         Optional viewport.
 
     Returns
     -------
-    GTree
+    Grob
         The bezier grob.
     """
     grob = bezier_grob(
-        x=x, y=y, default_units=default_units,
+        x=x, y=y, id=id, id_lengths=id_lengths,
+        default_units=default_units,
         arrow=arrow, name=name, gp=gp, vp=vp,
     )
     if draw:
@@ -1658,32 +1941,39 @@ def grid_bezier(
     return grob
 
 
-def bezier_points(x: Grob, n: int = 50) -> Dict[str, NDArray[np.float64]]:
-    """Extract evaluated Bezier curve points from a bezier grob.
+def bezier_points(
+    x: Grob,
+) -> Union[Dict[str, NDArray[np.float64]], List[Dict[str, NDArray[np.float64]]]]:
+    """Extract the evaluated curve points from a bezier grob.
+
+    Port of R ``bezierPoints`` (primitives.R:1022-1027): the bezier grob
+    is converted to its X-spline approximation (``splinegrob``) and the
+    curve is traced with :func:`xspline_points`.  Note that, exactly as
+    in R, the returned points come from the X-spline approximation of
+    the Bezier — not from evaluating the true Bezier polynomial — and
+    their number depends on the device size.
 
     Parameters
     ----------
     x : Grob
         A bezier grob (``_grid_class="beziergrob"``).
-    n : int
-        Number of evaluation points (default 50).
 
     Returns
     -------
-    dict
-        Dictionary with keys ``"x"`` and ``"y"``, each an ndarray of
-        evaluated Bezier coordinates.
+    dict or list of dict
+        For a single curve, a dict with ``"x"`` / ``"y"`` ndarrays in
+        INCHES; for multiple curves, a list of such dicts (mirroring R).
 
     Raises
     ------
     TypeError
         If *x* is not a bezier grob.
     """
-    if not isinstance(x, (Grob, GTree)) or getattr(x, "_grid_class", None) != "beziergrob":
+    if not isinstance(x, Grob) or getattr(x, "_grid_class", None) != "beziergrob":
         raise TypeError("'x' must be a beziergrob grob")
 
-    ctrl_x = np.asarray(x.x.values if hasattr(x.x, "values") else x.x, dtype=np.float64)
-    ctrl_y = np.asarray(x.y.values if hasattr(x.y, "values") else x.y, dtype=np.float64)
-
-    px, py = _calc_bezier_points(ctrl_x, ctrl_y, n=n)
-    return {"x": px, "y": py}
+    sg = _splinegrob(x)
+    # splinegrob() conversion happens in the caller's context; enforce
+    # the bezier's vp for the trace exactly like R (primitives.R:1024-1026)
+    sg.vp = x.vp
+    return xspline_points(sg)

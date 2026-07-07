@@ -814,7 +814,7 @@ def is_closed(x: Any) -> bool:
         return False
     # Special handling for xspline
     if grid_class == "xspline":
-        return not getattr(x, "open", True)
+        return not getattr(x, "open_", True)
     # Special handling for points
     if grid_class == "points":
         pch = getattr(x, "pch", None)
@@ -1484,19 +1484,25 @@ def _grob_points_text(x: Grob, closed: bool = True) -> GridGrobCoords:
 def _grob_points_xspline(x: Grob, closed: Optional[bool] = None) -> GridGrobCoords:
     """grobPoints.xspline -- R coords.R:565-586.
 
-    Returns traced spline points. Falls back to control points if
-    the spline tracing function is unavailable.
+    Returns the traced spline curve via ``xsplinePoints`` (one point set
+    per ``id`` group), exactly like R.
     """
-    is_open = getattr(x, "open", True)
+    is_open = bool(getattr(x, "open_", True))
     if closed is None:
         closed = not is_open
 
     if (closed and not is_open) or (not closed and is_open):
-        from ._units import convert_x, convert_y
-        xx = convert_x(x.x, "inches", valueOnly=True)
-        yy = convert_y(x.y, "inches", valueOnly=True)
+        from ._curve import xspline_points
+        trace = xspline_points(x)
+        if isinstance(trace, dict):
+            # Single X-spline
+            return GridGrobCoords(
+                [GridCoords(trace["x"], trace["y"], name="1")],
+                name=x.name,
+            )
         return GridGrobCoords(
-            [GridCoords(xx, yy, name="1")],
+            [GridCoords(t["x"], t["y"], name=str(i + 1))
+             for i, t in enumerate(trace)],
             name=x.name,
         )
     return empty_grob_coords(x.name)

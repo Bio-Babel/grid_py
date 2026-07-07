@@ -430,7 +430,8 @@ def _render_grob(
 
     # ---- xspline ---------------------------------------------------------
     elif cls == "xspline":
-        from ._curve import _calc_xspline_points  # lazy to avoid import cycle
+        # lazy to avoid import cycle
+        from ._curve import _calc_xspline_points, _trim_identical_ends
 
         x, y = renderer.resolve_loc_array(
             getattr(grob, "x", [0.0, 1.0]),
@@ -456,9 +457,20 @@ def _render_grob(
 
         arr = getattr(grob, "arrow", None)
 
+        # Coordinates from resolve_loc_array are device units; R's engine
+        # samples the curve at a density derived from PHYSICAL size
+        # (xspline.c COPY_CONTROL_POINT converts to 1200ppi) and clamps
+        # remote segments at the device diagonal (step_computing).
+        xsp_device = dict(
+            units_per_inch=float(renderer._dev_units_per_inch),
+            device_size_in=(float(renderer.width_in),
+                            float(renderer.height_in)),
+        )
+
         if id_ is None:
             xs, ys = _calc_xspline_points(
                 x, y, shape=shape_arr, open_=open_, repEnds=rep_ends,
+                **xsp_device,
             )
             # R's ``xsplineGrob(open=FALSE)`` is a *filled closed* shape, not
             # a stroked path; route through ``draw_polygon`` so ``gp$fill``
@@ -469,8 +481,12 @@ def _render_grob(
                 renderer.draw_polyline(xs, ys, id_=None, gp=gp)
             else:
                 renderer.draw_polygon(xs, ys, gp=gp)
-            if arr is not None and len(xs) >= 2:
-                _draw_arrow_heads(xs, ys, arr, renderer, gp)
+            if arr is not None:
+                # R trims identical points from the curve ends before
+                # arrows so heads sit at the correct angle (grid.c:2475)
+                txs, tys = _trim_identical_ends(xs, ys)
+                if len(txs) >= 2:
+                    _draw_arrow_heads(txs, tys, arr, renderer, gp)
         else:
             id_arr = np.atleast_1d(np.asarray(id_, dtype=int))
             all_xs: List[float] = []
@@ -485,6 +501,7 @@ def _render_grob(
                     shape=shape_arr[mask],
                     open_=open_,
                     repEnds=rep_ends,
+                    **xsp_device,
                 )
                 all_xs.extend(xs_g.tolist())
                 all_ys.extend(ys_g.tolist())
@@ -512,8 +529,9 @@ def _render_grob(
                     )
                 if arr is not None:
                     for xs_g, ys_g in per_group:
-                        if len(xs_g) >= 2:
-                            _draw_arrow_heads(xs_g, ys_g, arr, renderer, gp)
+                        txs, tys = _trim_identical_ends(xs_g, ys_g)
+                        if len(txs) >= 2:
+                            _draw_arrow_heads(txs, tys, arr, renderer, gp)
 
     # ---- polygon ---------------------------------------------------------
     elif cls == "polygon":
@@ -735,7 +753,11 @@ def _render_grob(
 
     # ---- null / gTree / base grob – no-op --------------------------------
     elif cls in ("null", "grob", "gTree", "frame", "cellGrob",
-                 "xaxis", "yaxis", "delayedgrob", "recordedGrob"):
+                 "xaxis", "yaxis", "delayedgrob", "recordedGrob",
+                 # group grobs render through their own draw_details
+                 # (ports of R drawDetails.GridGroup / .GridDefine /
+                 # .GridUse in _group.py), not through this dispatcher
+                 "GridGroup", "GridDefine", "GridUse"):
         pass
 
     # ---- move.to / line.to -----------------------------------------------
@@ -756,10 +778,15 @@ def _render_grob(
         _GROB_RENDERERS[cls](grob, renderer, gp)
 
     else:
-        # Unknown ``_grid_class`` → silent no-op.  Any grob without a
-        # dedicated draw routine or renderer registration simply draws
-        # nothing.
-        pass
+        # Unknown ``_grid_class``: R's default drawDetails draws nothing,
+        # but here every KNOWN class is dispatched above, so reaching this
+        # branch almost always means a missing port (e.g. a grob whose
+        # make_content was never implemented).  Warn instead of silently
+        # producing blank output.
+        warnings.warn(
+            f"no draw routine for grob class {cls!r}; nothing drawn",
+            stacklevel=2,
+        )
 
     # Clear grob metadata after rendering
     if metadata is not None and hasattr(renderer, "clear_grob_metadata"):

@@ -411,4 +411,7 @@ def is_closed(x: Any) -> bool:
         ``True`` for closed shapes, ``False`` for open ones.
     """
     cls_name: str = getattr(x, "_grid_class", type(x).__name__)
+    # R isClosed.xspline: an open X-spline is not closed
+    if cls_name == "xspline":
+        return not getattr(x, "open_", True)
     return cls_name not in _OPEN_TYPES

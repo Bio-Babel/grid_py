@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional, Union
 
 import cairo
+import numpy as np
 
 from ._gpar import Gpar
 from ._units import Unit
@@ -878,60 +879,99 @@ def _raster_height_details(grob: Any) -> Unit:
 
 # -- xspline grob (R: primitives.R:845-861, uses C_xsplineBounds) ----------
 
-def _xspline_width_details(grob: Any) -> Unit:
-    """Width of an xspline grob: bounding box of control points.
+def _xspline_eval_bounds(grob: Any) -> Optional[tuple]:
+    """Evaluate an xspline grob's curve and return its inch bounds.
 
-    Port of R ``widthDetails.xspline`` (primitives.R:845) which uses
-    ``C_xsplineBounds``.  We approximate by using the control point
-    bounding box (same as C_locnBounds on the control points).
+    Port of R ``widthDetails.xspline`` / ``heightDetails.xspline``
+    (primitives.R:845-861) → ``C_xsplineBounds`` (grid.c gridXspline
+    with ``draw=FALSE``): the control points are converted to inches in
+    the current context, the spline is evaluated — R passes
+    ``list(seq_along(x$x))``, i.e. ALL control points as a single spline
+    even when ``id`` is set — and the bounds of the evaluated points are
+    returned as ``(xmin, xmax, ymin, ymax)`` (``None`` when there are no
+    finite points).
+    """
+    from ._curve import _calc_xspline_points, _device_size_in
+    from ._units import convert_x, convert_y
+
+    xx = np.atleast_1d(np.asarray(
+        convert_x(grob.x, "inches", valueOnly=True), dtype=np.float64))
+    yy = np.atleast_1d(np.asarray(
+        convert_y(grob.y, "inches", valueOnly=True), dtype=np.float64))
+    shape = np.resize(
+        np.atleast_1d(np.asarray(getattr(grob, "shape", 0.0),
+                                 dtype=np.float64)),
+        len(xx))
+    px, py = _calc_xspline_points(
+        xx, yy, shape,
+        open_=bool(getattr(grob, "open_", True)),
+        repEnds=bool(getattr(grob, "repEnds", True)),
+        units_per_inch=1.0,
+        device_size_in=_device_size_in(),
+    )
+    finite = np.isfinite(px) & np.isfinite(py)
+    if not np.any(finite):
+        return None
+    px = px[finite]
+    py = py[finite]
+    return (float(px.min()), float(px.max()),
+            float(py.min()), float(py.max()))
+
+
+def _xspline_width_details(grob: Any) -> Unit:
+    """Width of an xspline grob: bounds of the EVALUATED curve.
+
+    Port of R ``widthDetails.xspline`` (primitives.R:845-852).
     """
     renderer = _get_renderer()
     if renderer is None:
         return Unit(0, "inches")
-    x_unit = getattr(grob, "x", None)
-    gp = getattr(grob, "gp", None)
-    return Unit(_locn_bounds_width(x_unit, renderer, gp), "inches")
+    bounds = _xspline_eval_bounds(grob)
+    if bounds is None:
+        return Unit(0, "inches")
+    return Unit(bounds[1] - bounds[0], "inches")
 
 
 def _xspline_height_details(grob: Any) -> Unit:
-    """Height of an xspline grob.
+    """Height of an xspline grob: bounds of the EVALUATED curve.
 
-    Port of R ``heightDetails.xspline`` (primitives.R:854).
+    Port of R ``heightDetails.xspline`` (primitives.R:854-861).
     """
     renderer = _get_renderer()
     if renderer is None:
         return Unit(0, "inches")
-    y_unit = getattr(grob, "y", None)
-    gp = getattr(grob, "gp", None)
-    return Unit(_locn_bounds_height(y_unit, renderer, gp), "inches")
+    bounds = _xspline_eval_bounds(grob)
+    if bounds is None:
+        return Unit(0, "inches")
+    return Unit(bounds[3] - bounds[2], "inches")
 
 
 # -- bezier grob (R: primitives.R:997-1003, expands via splinegrob()) ------
 
 def _bezier_width_details(grob: Any) -> Unit:
-    """Width of a bezier grob: bounding box of control points.
+    """Width of a bezier grob.
 
-    Port of R ``widthDetails.beziergrob`` (primitives.R:997).
+    Port of R ``widthDetails.beziergrob`` (primitives.R:997-999):
+    delegates to the X-spline approximation of the Bezier.
     """
+    from ._curve import _splinegrob
     renderer = _get_renderer()
     if renderer is None:
         return Unit(0, "inches")
-    x_unit = getattr(grob, "x", None)
-    gp = getattr(grob, "gp", None)
-    return Unit(_locn_bounds_width(x_unit, renderer, gp), "inches")
+    return _xspline_width_details(_splinegrob(grob))
 
 
 def _bezier_height_details(grob: Any) -> Unit:
     """Height of a bezier grob.
 
-    Port of R ``heightDetails.beziergrob`` (primitives.R:1001).
+    Port of R ``heightDetails.beziergrob`` (primitives.R:1001-1003):
+    delegates to the X-spline approximation of the Bezier.
     """
+    from ._curve import _splinegrob
     renderer = _get_renderer()
     if renderer is None:
         return Unit(0, "inches")
-    y_unit = getattr(grob, "y", None)
-    gp = getattr(grob, "gp", None)
-    return Unit(_locn_bounds_height(y_unit, renderer, gp), "inches")
+    return _xspline_height_details(_splinegrob(grob))
 
 
 # -- curve grob (R: curve.R:481-495, expands via calcCurveGrob()) ----------

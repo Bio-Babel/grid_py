@@ -403,11 +403,12 @@ class TestIsClosed:
         assert is_closed(g) is False
 
     def test_xspline_open(self):
-        g = Grob(name="x", _grid_class="xspline", open=True)
+        # xspline grobs store the flag as ``open_`` (see xspline_grob)
+        g = Grob(name="x", _grid_class="xspline", open_=True)
         assert is_closed(g) is False
 
     def test_xspline_closed(self):
-        g = Grob(name="x", _grid_class="xspline", open=False)
+        g = Grob(name="x", _grid_class="xspline", open_=False)
         assert is_closed(g) is True
 
     def test_points_closed_default(self):
