@@ -1965,31 +1965,39 @@ class _FunctionGrob(Grob):
     def make_content(self):
         """Evaluate the function and return a lines grob.
 
-        Mirrors R's ``makeContent.functiongrob`` (function.R:43-47).
+        Port of ``makeContent.functiongrob`` + ``genXY``
+        (function.R:30-47): ``n`` regularly-spaced inputs over the range;
+        the function receives the whole input vector and must return a
+        mapping with "x" and "y" sequences (R: ``list(x=, y=)``).
         """
-        fn = self.f
-        n = self.n
         rng = self.range
         units = getattr(self, "units", "native")
 
         if isinstance(rng, str) and rng == "x":
             from ._viewport import current_viewport
             vp = current_viewport()
-            xscale = getattr(vp, "_xscale", None) or getattr(vp, "xscale", [0, 1])
-            t = [xscale[0] + i * (xscale[1] - xscale[0]) / n for i in range(n + 1)]
+            scale = (getattr(vp, "_xscale", None)
+                     or getattr(vp, "xscale", [0, 1]))
         elif isinstance(rng, str) and rng == "y":
             from ._viewport import current_viewport
             vp = current_viewport()
-            yscale = getattr(vp, "_yscale", None) or getattr(vp, "yscale", [0, 1])
-            t = [yscale[0] + i * (yscale[1] - yscale[0]) / n for i in range(n + 1)]
+            scale = (getattr(vp, "_yscale", None)
+                     or getattr(vp, "yscale", [0, 1]))
         else:
-            rng = list(rng)
-            t = [rng[0] + i * (rng[1] - rng[0]) / n for i in range(n + 1)]
+            # R: range(x$range) sorts the numeric range to (min, max)
+            rng_arr = np.asarray(rng, dtype=float)
+            scale = (float(rng_arr.min()), float(rng_arr.max()))
 
-        results = [fn(ti) for ti in t]
-        x_vals = t
-        y_vals = results
-
+        inputs = np.linspace(float(scale[0]), float(scale[1]), int(self.n))
+        xy = self.f(inputs)
+        try:
+            x_vals, y_vals = xy["x"], xy["y"]
+        except (TypeError, KeyError, IndexError):
+            raise TypeError(
+                "the functiongrob function must accept the input vector "
+                "and return a mapping with 'x' and 'y' coordinate "
+                "sequences (the analogue of R's list(x=, y=))"
+            ) from None
         return lines_grob(
             x=Unit(x_vals, units),
             y=Unit(y_vals, units),

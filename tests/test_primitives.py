@@ -493,13 +493,22 @@ class TestGridDrawFalse:
         assert g is not None
 
     def test_grid_function_no_draw(self):
-        g = grid_function(lambda t: t, draw=False)
+        g = grid_function(lambda t: {"x": t, "y": t}, draw=False)
         assert g is not None
 
     def test_grid_function_draw(self):
+        # R contract (function.R genXY): f receives the whole input
+        # vector and returns list(x=, y=)
         from grid_py._state import get_state
         from grid_py._draw import grid_newpage
         grid_newpage()
-        g = grid_function(lambda t: t, draw=True)
+        g = grid_function(lambda t: {"x": t, "y": t}, draw=True)
         dl = get_state().get_display_list()
         assert len(dl) >= 1
+
+    def test_grid_function_wrong_contract_raises(self):
+        from grid_py._draw import grid_newpage
+        grid_newpage()
+        g = grid_function(lambda t: t, draw=False)
+        with pytest.raises(TypeError, match="mapping with 'x' and 'y'"):
+            g.make_content()

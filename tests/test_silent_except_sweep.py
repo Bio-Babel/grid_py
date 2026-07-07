@@ -46,16 +46,14 @@ class TestGrobUnitEvalFallbackWarns:
     not silently report 0 inches."""
 
     def test_buggy_width_details_emits_warning(self):
-        from grid_py import grid_newpage, rect_grob
-        from grid_py._renderer_base import GridRenderer
-        # Build a renderer with a deliberately buggy grob whose
-        # width_details raises an AttributeError when called.
-        class BrokenGrob:
-            x = None; y = None; vp = None; gp = None
-            def width_details(self): raise AttributeError("intentional")
-            def height_details(self): return None
-            def pre_draw_details(self): pass
-            def post_draw_details(self): pass
+        from grid_py import grid_newpage
+        from grid_py._grob import Grob
+
+        # A deliberately buggy grob whose width_details raises when the
+        # grobwidth unit is evaluated.
+        class BrokenGrob(Grob):
+            def width_details(self):
+                raise AttributeError("intentional")
 
         grid_newpage()
         from grid_py._state import get_state
@@ -64,12 +62,12 @@ class TestGrobUnitEvalFallbackWarns:
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always", UserWarning)
-            # Trigger _grob_xy_inches_at_theta — exercises the
-            # _details_inches fallback path
-            renderer._grob_xy_inches_at_theta(BrokenGrob(), "grobx", 0.0)
+            result = renderer._evaluate_grob_unit(
+                BrokenGrob(name="broken"), "grobwidth", 1.0)
 
+        assert result == 0.0
         msgs = [str(w.message) for w in caught
                 if issubclass(w.category, UserWarning)]
-        assert any("width_details failed" in m for m in msgs), (
-            f"Expected width_details warning; got: {msgs}"
+        assert any("grob unit evaluation failed" in m for m in msgs), (
+            f"Expected grob-unit warning; got: {msgs}"
         )

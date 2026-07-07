@@ -724,6 +724,8 @@ class GridRenderer(ABC):
         state.set_display_list_on(False)
         saved_gpar = copy.copy(state.get_gpar())
         saved_current_grob = getattr(state, "_current_grob", None)
+        # caller's viewport transform (R unit.c savedTransform)
+        saved_transform = self._vp_transform_stack[-1].transform
 
         try:
             # --- preDraw(grob) (R unit.c:434-435) ---
@@ -742,13 +744,20 @@ class GridRenderer(ABC):
             fontsize, cex, lineheight = self._gpar_font_params(gp)
 
             if unit_type in ("grobx", "groby"):
-                # Compute the x/y coordinate on the grob's bounding box at
-                # the requested angle (encoded in ``value``; 0=east, 90=north,
-                # 180=west, 270=south).  Mirrors ``xDetails.text`` /
-                # ``yDetails.text`` in R grid (primitives.R:1406-1428).
-                result = self._grob_xy_inches_at_theta(
-                    grob, unit_type, float(value), gp,
-                )
+                # R unit.c:496-527: evaluate BOTH xDetails and yDetails
+                # (``value`` holds the angle), transform the edge point to
+                # absolute coords with the grob-context transform ("to
+                # allow for viewports in grob"), then adjust relative to
+                # the caller's viewport via its inverse transform.
+                from ._size import x_details, y_details
+                unit_x = x_details(grob, float(value))
+                unit_y = y_details(grob, float(value))
+                lx = float(self._resolve_to_inches(unit_x, "x", False, gp))
+                ly = float(self._resolve_to_inches(unit_y, "y", False, gp))
+                abs_loc = trans(location(lx, ly), vtr.transform)
+                out = trans(location(float(abs_loc[0]), float(abs_loc[1])),
+                            np.linalg.inv(saved_transform))
+                result = float(out[0] if unit_type == "grobx" else out[1])
             else:
                 if unit_type == "grobwidth":
                     result_unit = width_details(grob)
@@ -806,129 +815,6 @@ class GridRenderer(ABC):
             self._measuring_grobs.discard(_measuring_id)
 
         return result
-
-    def _grob_xy_inches_at_theta(
-        self,
-        grob: Any,
-        unit_type: str,
-        theta_deg: float,
-        gp: Optional[Any] = None,
-    ) -> float:
-        """Return the inches x- or y-coordinate at angle ``theta_deg`` on a
-        grob's bounding box.
-
-        Used to resolve ``grobx`` / ``groby`` units (e.g. those produced by
-        ``grob_x(text_grob, "west")``).  The angle convention: 0 = east,
-        90 = north, 180 = west, 270 = south.
-
-        Only the axis-aligned rectangle defined by width/height + hjust/vjust
-        is considered; rotated text is approximated by its upright box (good
-        enough for the common ``rot=0`` path that dominates ggrepel output).
-        """
-        import math
-        from ._units import Unit
-        from ._size import width_details, height_details
-
-        # Grob anchor (grob.x, grob.y) — default to center of viewport if absent.
-        x_unit = getattr(grob, "x", None)
-        y_unit = getattr(grob, "y", None)
-        if x_unit is None:
-            x_unit = Unit(0.5, "npc")
-        if y_unit is None:
-            y_unit = Unit(0.5, "npc")
-        try:
-            x_inches = self._resolve_to_inches(x_unit, "x", False, gp)
-        except (ValueError, AttributeError, TypeError, IndexError) as exc:
-            warnings.warn(
-                f"grob x-coord could not be resolved; "
-                f"defaulting anchor to x=0 inches: {exc}",
-                UserWarning, stacklevel=2,
-            )
-            x_inches = 0.0
-        try:
-            y_inches = self._resolve_to_inches(y_unit, "y", False, gp)
-        except (ValueError, AttributeError, TypeError, IndexError) as exc:
-            warnings.warn(
-                f"grob y-coord could not be resolved; "
-                f"defaulting anchor to y=0 inches: {exc}",
-                UserWarning, stacklevel=2,
-            )
-            y_inches = 0.0
-
-        # Width / height of the grob's bounding box, in inches.
-        def _details_inches(fn, axis: str) -> float:
-            try:
-                u = fn(grob)
-            except (ValueError, AttributeError, TypeError) as exc:
-                # User grob's ``width_details`` / ``height_details`` raised;
-                # surface so the user knows their grob is mis-implementing
-                # the size protocol.
-                warnings.warn(
-                    f"grob {fn.__name__} failed; using 0 inches: {exc}",
-                    UserWarning, stacklevel=2,
-                )
-                return 0.0
-            if u is None:
-                return 0.0
-            if not isinstance(u, Unit):
-                return 0.0
-            if len(u) == 1 and u._units[0] == "null":
-                return 0.0
-            try:
-                return float(self._resolve_to_inches(u, axis, True, gp))
-            except (ValueError, AttributeError, TypeError, IndexError) as exc:
-                warnings.warn(
-                    f"grob {axis}-dim unit could not be resolved; "
-                    f"using 0 inches: {exc}",
-                    UserWarning, stacklevel=2,
-                )
-                return 0.0
-
-        w_in = _details_inches(width_details, "x")
-        h_in = _details_inches(height_details, "y")
-
-        # hjust / vjust control which corner of the box is anchored at (x, y).
-        #
-        # Per R/just.R (4.5.3) ``resolveHJust`` / ``resolveVJust``:
-        # when ``hjust`` / ``vjust`` is NULL the value is derived from
-        # ``just`` (which may be a string like ``"left"`` or a 2-element
-        # vector).  Previously this code looked at ``grob.hjust`` and
-        # ``grob.vjust`` only, so a grob built with
-        # ``rect_grob(just="left")`` (which stores ``hjust=None``,
-        # ``just="left"``) fell back to centre.  Going through the
-        # shared ``resolve_hjust`` / ``resolve_vjust`` helpers brings
-        # the bbox computation in line with R for every just-string
-        # form (single string, tuple of strings, numeric, mixed).
-        from ._just import resolve_hjust, resolve_vjust
-
-        just = getattr(grob, "just", None)
-        if just is None:
-            just = "centre"
-        hjust = float(resolve_hjust(just, getattr(grob, "hjust", None)))
-        vjust = float(resolve_vjust(just, getattr(grob, "vjust", None)))
-
-        # Centre of the bounding box in inches.
-        cx = x_inches + (0.5 - hjust) * w_in
-        cy = y_inches + (0.5 - vjust) * h_in
-
-        # Point on the box at direction theta (from centre).  Ray hits the
-        # nearest axis-aligned edge.
-        rad = math.radians(theta_deg)
-        cos_t = math.cos(rad)
-        sin_t = math.sin(rad)
-        dx = w_in / 2.0
-        dy = h_in / 2.0
-        eps = 1e-12
-        if abs(cos_t) < eps:
-            t = dy / max(abs(sin_t), eps)
-        elif abs(sin_t) < eps:
-            t = dx / max(abs(cos_t), eps)
-        else:
-            t = min(dx / abs(cos_t), dy / abs(sin_t))
-
-        px = cx + t * cos_t
-        py = cy + t * sin_t
-        return float(px if unit_type == "grobx" else py)
 
     def _find_grob_for_metric(self, grob_ref: Any, state: Any) -> Any:
         """Resolve a gPath/string to an actual grob for metric evaluation.

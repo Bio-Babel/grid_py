@@ -14,6 +14,7 @@ paralleling R's ``"grobwidth"``, ``"grobheight"``, etc. unit family.
 
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, Optional, Union
 
 import cairo
@@ -299,26 +300,13 @@ def _text_bbox(grob: Any) -> tuple:
 
     # Per-extra-line gap in inches — matches R's ``cra[1] × ipr[1] / default_ps``
     # collapsed for the standard device (= fontsize × 1.2 / 72).
-    inter_line_gap = cex * lineheight * fontsize * 1.2 / 72.0
-
     xmin = float("inf")
     xmax = float("-inf")
     ymin = float("inf")
     ymax = float("-inf")
 
     for lab in labels:
-        lines = lab.split("\n") if lab else [""]
-        n_lines = len(lines)
-        # Width: max per-line width (R's ``GEStrWidth`` walks each line).
-        w = max(calc_string_metric(ln, gp=gp)["width"] for ln in lines)
-        # Height: ascent of the first line + per-line gap × (n - 1).
-        # R's ``heightDetails.text`` / ``GEStrHeight`` returns ASCENT
-        # only — never descent. Descent is a separate method
-        # (``descentDetails.text``). Including descent here would
-        # double-count it downstream in ggplot2 ``titleGrob``, which
-        # adds ``grobDescent`` manually to form the rendered height.
-        m0 = calc_string_metric(lines[0], gp=gp)
-        h = m0["ascent"] + (n_lines - 1) * inter_line_gap
+        w, h = _text_label_extent(lab, gp, cex, lineheight, fontsize)
 
         if rot == 0.0:
             # No rotation: bbox is just the text extent
@@ -1014,6 +1002,925 @@ def _curve_height_details(grob: Any) -> Unit:
 
 
 # ---------------------------------------------------------------------------
+# xDetails / yDetails edge geometry — "the point on the edge of a grob at
+# angle theta" (degrees, 0 = East, 90 = North).  Ports of grid.c rectEdge /
+# circleEdge / polygonEdge / hullEdge plus the !draw branches of the
+# per-class C bounds functions (L_locnBounds, gridRect, gridCircle,
+# gridText, gridXspline).  All coordinates are inches within the current
+# viewport.  Results are NOT divided by GSS_SCALE, consistent with the
+# width/height handlers above (zoom is handled at unit-resolution).
+# ---------------------------------------------------------------------------
+
+
+def _rect_edge(xmin: float, ymin: float, xmax: float, ymax: float,
+               theta: float) -> tuple:
+    """Point on the edge of a rectangle at angle *theta*.
+
+    Port of ``rectEdge`` (grid.c:1751-1800), including the exact special
+    cases for 0/90/180/270 degrees.
+    """
+    xm = (xmin + xmax) / 2.0
+    ym = (ymin + ymax) / 2.0
+    dx = (xmax - xmin) / 2.0
+    dy = (ymax - ymin) / 2.0
+    if theta == 0:
+        return (xmax, ym)
+    if theta == 270:
+        return (xm, ymin)
+    if theta == 180:
+        return (xmin, ym)
+    if theta == 90:
+        return (xm, ymax)
+    # C computes dy/dx without a zero guard (IEEE inf); replicate that
+    cutoff = math.inf if dx == 0.0 else dy / dx
+    angle = theta / 180.0 * math.pi
+    tan_theta = math.tan(angle)
+    cos_theta = math.cos(angle)
+    sin_theta = math.sin(angle)
+    if abs(tan_theta) < cutoff:
+        if cos_theta > 0:
+            return (xmax, ym + tan_theta * dx)
+        return (xmin, ym - tan_theta * dx)
+    if sin_theta > 0:
+        return (xm + dy / tan_theta, ymax)
+    return (xm - dy / tan_theta, ymin)
+
+
+def _circle_edge(x: float, y: float, r: float, theta: float) -> tuple:
+    """Point on the circle at angle *theta* (``circleEdge``, grid.c:1809)."""
+    angle = theta / 180.0 * math.pi
+    return (x + r * math.cos(angle), y + r * math.sin(angle))
+
+
+def _polygon_edge(x: Any, y: Any, theta: float) -> tuple:
+    """Point on the edge of a *convex* polygon at angle *theta*.
+
+    Port of ``polygonEdge`` (grid.c:1826-1949).  Vertices must be in
+    CLOCKWISE order (chull() convention): the scan takes the FIRST edge
+    subtending *theta* about the bbox centre, so vertex order matters.
+    """
+    n = len(x)
+    xmin = math.inf
+    xmax = -math.inf
+    ymin = math.inf
+    ymax = -math.inf
+    # explicit comparisons like C: NaN vertices are silently skipped
+    for i in range(n):
+        if x[i] < xmin:
+            xmin = x[i]
+        if x[i] > xmax:
+            xmax = x[i]
+        if y[i] < ymin:
+            ymin = y[i]
+        if y[i] > ymax:
+            ymax = y[i]
+    xm = (xmin + xmax) / 2.0
+    ym = (ymin + ymax) / 2.0
+    # degenerate branches: very tall-and-narrow / short-and-wide polygons
+    wdiff = abs(xmin - xmax)
+    hdiff = abs(ymin - ymax)
+    if wdiff < 1e-6 or hdiff / wdiff > 1000:
+        edgex = xmin
+        if theta == 90:
+            edgey = ymax
+        elif theta == 270:
+            edgey = ymin
+        else:
+            edgey = ym
+        return (edgex, edgey)
+    if hdiff < 1e-6 or wdiff / hdiff > 1000:
+        edgey = ymin
+        if theta == 0:
+            edgex = xmax
+        elif theta == 180:
+            edgex = xmin
+        else:
+            edgex = xm
+        return (edgex, edgey)
+    angle = theta / 180.0 * math.pi
+    found = False
+    v1 = v2 = 0
+    for i in range(n):
+        v1 = i
+        v2 = 0 if i + 1 == n else i + 1
+        vangle1 = math.atan2(y[v1] - ym, x[v1] - xm)
+        if vangle1 < 0:
+            vangle1 += 2.0 * math.pi
+        vangle2 = math.atan2(y[v2] - ym, x[v2] - xm)
+        if vangle2 < 0:
+            vangle2 += 2.0 * math.pi
+        if ((vangle1 >= vangle2 and
+             vangle1 >= angle and vangle2 <= angle) or
+            (vangle1 < vangle2 and
+             ((vangle1 >= angle and 0 <= angle) or
+              (vangle2 <= angle and 2.0 * math.pi >= angle)))):
+            found = True
+            break
+    if not found:
+        raise ValueError("polygon edge not found")
+    # intersect the centre->rectEdge segment with the found edge
+    x1, y1 = xm, ym
+    x2, y2 = _rect_edge(xmin, ymin, xmax, ymax, theta)
+    x3, y3 = x[v1], y[v1]
+    x4, y4 = x[v2], y[v2]
+    numa = (x4 - x3) * (y1 - y3) - (y4 - y3) * (x1 - x3)
+    denom = (y4 - y3) * (x2 - x1) - (x4 - x3) * (y2 - y1)
+    # C relies on IEEE division producing inf/NaN, then errors on it
+    ua = math.inf if denom == 0.0 else numa / denom
+    if not math.isfinite(ua):
+        raise ValueError("polygon edge not found (zero-width or zero-height?)")
+    return (x1 + ua * (x2 - x1), y1 + ua * (y2 - y1))
+
+
+def _chull_split(xs: Any, ys: Any, m: int, in_arr: list, in_base: int,
+                 ii: int, jj: int, s: int,
+                 iabv: list, iabv_base: int,
+                 ibel: list, ibel_base: int) -> tuple:
+    """Partition points by the line through vertices *ii* and *jj*.
+
+    Verbatim port of ``split`` (grDevices chull.c); the ``*_base`` args
+    play the role of the C base pointers (``&in[1]``, ``&ib[nib]``, ...).
+    Returns ``(na, maxa, nb, maxb)``: subset sizes and 1-based positions
+    of the farthest point in each subset (0 when empty).
+    """
+    xt = xs[ii]
+    vert = xs[jj] == xt
+    d1 = ys[jj] - ys[ii]
+    a = b = 0.0
+    neg_dir = False
+    if vert:
+        neg_dir = (s > 0 and d1 < 0.0) or (s < 0 and d1 > 0.0)
+    else:
+        a = d1 / (xs[jj] - xt)
+        b = ys[ii] - a * xt
+    up = 0.0
+    na = 0
+    maxa = 0
+    down = 0.0
+    nb = 0
+    maxb = 0
+    for i in range(m):
+        is_ = in_arr[in_base + i]
+        if vert:
+            z = (xt - xs[is_]) if neg_dir else (xs[is_] - xt)
+        else:
+            z = ys[is_] - a * xs[is_] - b
+        if z > 0.0:  # the point is ABOVE the line
+            if s == -2:
+                continue
+            iabv[iabv_base + na] = is_
+            na += 1
+            if z >= up:
+                up = z
+                maxa = na
+        elif s != 2 and z < 0.0:  # the point is BELOW the line
+            ibel[ibel_base + nb] = is_
+            nb += 1
+            if z <= down:
+                down = z
+                maxb = nb
+    return na, maxa, nb, maxb
+
+
+def _chull(x: Any, y: Any) -> list:
+    """Convex hull indices (0-based) exactly as R's ``grDevices::chull()``.
+
+    Line-by-line port of ``in_chull`` (grDevices chull.c — ACM TOMS 523,
+    Eddy 1977) plus the SEXP wrapper's reversal and the R-level angle
+    sort.  The exact clockwise vertex ORDER matters: ``polygonEdge``
+    takes the first edge its scan matches.
+    """
+    n = len(x)
+    if n == 0:
+        return []
+    # 1-based arrays (index 0 unused) mirroring the f2c pointer adjustments
+    xs = [0.0] * (n + 1)
+    ys = [0.0] * (n + 1)
+    for i in range(n):
+        xs[i + 1] = float(x[i])
+        ys[i + 1] = float(y[i])
+    m = n
+    in_arr = [0] * (n + 2)
+    for i in range(1, n + 1):
+        in_arr[i] = i
+    ia = [0] * (n + 2)
+    ib = [0] * (n + 2)
+    ih = [0] * (n + 2)
+    il = [0] * (n + 2)
+    nh = 0
+
+    def finis() -> list:
+        # chull.c Finis (reorder ih along the linked list il), the SEXP
+        # wrapper's reversal, then the R-level chull() angle sort:
+        # res[order(atan2(dy, -dx))] about the hull-vertex mean
+        nonlocal nh
+        nh -= 1
+        ia_tmp = [0] * (nh + 1)
+        for i in range(1, nh + 1):
+            ia_tmp[i] = ih[i]
+        j = il[1]
+        for i in range(2, nh + 1):
+            ih[i] = ia_tmp[j]
+            j = il[j]
+        res = [ih[nh - i] - 1 for i in range(nh)]
+        if len(res) < 2:
+            return res
+        cx = sum(x[i] for i in res) / len(res)
+        cy = sum(y[i] for i in res) / len(res)
+        # stable sort = R order()'s tie behaviour
+        return sorted(res, key=lambda i: math.atan2(y[i] - cy,
+                                                    -(x[i] - cx)))
+
+    if m == 1:
+        # L_1pt
+        nh = 2
+        ih[1] = in_arr[1]
+        il[1] = 1
+        return finis()
+
+    il[1] = 2
+    il[2] = 1
+    kn = in_arr[1]
+    kx = in_arr[2]
+    if m == 2:
+        # L_2pts
+        ih[1] = kx
+        ih[2] = kn
+        if xs[kn] == xs[kx] and ys[kn] == ys[kx]:
+            nh = 2
+        else:
+            nh = 3
+        return finis()
+
+    mp1 = m + 1
+    min_ = 1
+    mx = 1
+    kx = in_arr[1]
+    maxe = False
+    mine = False
+    # initial partition vertices: max-x (kx) and min-x (kn) points
+    for i in range(2, m + 1):
+        j = in_arr[i]
+        d1 = xs[j] - xs[kx]
+        if d1 < 0.0:
+            pass
+        elif d1 == 0.0:
+            maxe = True
+        else:
+            maxe = False
+            mx = i
+            kx = j
+        d1 = xs[j] - xs[kn]
+        if d1 < 0.0:
+            mine = False
+            min_ = i
+            kn = j
+        elif d1 == 0.0:
+            mine = True
+
+    if kx == kn:
+        # L_vertical: all the points lie on a vertical line
+        kx = in_arr[1]
+        kn = in_arr[1]
+        for i in range(1, m + 1):
+            j = in_arr[i]
+            if ys[j] > ys[kx]:
+                mx = i
+                kx = j
+            if ys[j] < ys[kn]:
+                min_ = i
+                kn = j
+        if kx == kn:
+            # L_1pt
+            nh = 2
+            ih[1] = in_arr[1]
+            il[1] = 1
+            return finis()
+        # L_2pts
+        ih[1] = kx
+        ih[2] = kn
+        if xs[kn] == xs[kx] and ys[kn] == ys[kx]:
+            nh = 2
+        else:
+            nh = 3
+        return finis()
+
+    if maxe or mine:
+        if maxe:  # tie-break equal max-x by largest y
+            for i in range(1, m + 1):
+                j = in_arr[i]
+                if xs[j] != xs[kx]:
+                    continue
+                if ys[j] <= ys[kx]:
+                    continue
+                mx = i
+                kx = j
+        if mine:  # tie-break equal min-x by smallest y
+            for i in range(1, m + 1):
+                j = in_arr[i]
+                if xs[j] != xs[kn]:
+                    continue
+                if ys[j] >= ys[kn]:
+                    continue
+                min_ = i
+                kn = j
+
+    # L7
+    ih[1] = kx
+    ih[2] = kn
+    nh = 3
+    inh = 1
+    nib = 1
+    ma = m
+    in_arr[mx] = in_arr[m]
+    in_arr[m] = kx
+    mm = m - 2
+    if min_ == m:
+        min_ = mx
+    in_arr[min_] = in_arr[m - 1]
+    in_arr[m - 1] = kn
+    # root partition
+    mb, mxa, nb_out, mxbb = _chull_split(
+        xs, ys, mm, in_arr, 1, ih[1], ih[2], 0, ia, 1, ib, 1)
+    ia[ma] = nb_out
+    mxb = 0
+    mbb = 0
+
+    # left half of the tree
+    goto_l12 = False
+    while not goto_l12:  # L8
+        nib += ia[ma]
+        ma -= 1
+        restart_l8 = False
+        while True:  # do { ... } while(true)
+            if mxa != 0:
+                il[nh] = il[inh]
+                il[inh] = nh
+                ih[nh] = ia[mxa]
+                ia[mxa] = ia[mb]
+                mb -= 1
+                nh += 1
+                if mb != 0:
+                    ilinh = il[inh]
+                    mbb, mxa, nb_out, mxb = _chull_split(
+                        xs, ys, mb, ia, 1, ih[inh], ih[ilinh], 1,
+                        ia, 1, ib, nib)
+                    ia[ma] = nb_out
+                    mb = mbb
+                    restart_l8 = True  # goto L8
+                    break
+                inh = il[inh]
+            while True:  # inner do { ... } while(ia[ma] == 0)
+                inh = il[inh]
+                ma += 1
+                nib -= ia[ma]
+                if ma >= m:
+                    goto_l12 = True
+                    break
+                if ia[ma] != 0:
+                    break
+            if goto_l12:
+                break
+            ilinh = il[inh]
+            # s=2: right son of a right son lies inside a triangle -> neglected
+            mb, mxa, nb_out, mxb = _chull_split(
+                xs, ys, ia[ma], ib, nib, ih[inh], ih[ilinh], 2,
+                ia, 1, ib, nib)
+            ia[ma] = nb_out
+        if not restart_l8 and not goto_l12:
+            break
+
+    # right half of the tree (L12)
+    mxb = mxbb
+    ma = m
+    mb = ia[ma]
+    nia = 1
+    ia[ma] = 0
+    finis_now = False
+    while not finis_now:  # L13
+        nia += ia[ma]
+        ma -= 1
+        restart_l13 = False
+        while True:  # do { ... } while(true)
+            if mxb != 0:
+                il[nh] = il[inh]
+                il[inh] = nh
+                ih[nh] = ib[mxb]
+                ib[mxb] = ib[mb]
+                mb -= 1
+                nh += 1
+                if mb != 0:
+                    ilinh = il[inh]
+                    na_out, mxa, mbb, mxb = _chull_split(
+                        xs, ys, mb, ib, nib, ih[inh], ih[ilinh], -1,
+                        ia, nia, ib, nib)
+                    ia[ma] = na_out
+                    mb = mbb
+                    restart_l13 = True  # goto L13
+                    break
+                inh = il[inh]
+            while True:  # inner do { ... } while(ia[ma] == 0)
+                inh = il[inh]
+                ma += 1
+                # Next two lines swapped in R 4.0.0 (nia unused in Finis)
+                if ma == mp1:
+                    finis_now = True
+                    break
+                nia -= ia[ma]
+                if ia[ma] != 0:
+                    break
+            if finis_now:
+                break
+            ilinh = il[inh]
+            # s=-2: left son of a left son lies inside a triangle -> neglected
+            mbb, mxa, mb, mxb = _chull_split(
+                xs, ys, ia[ma], ia, nia, ih[inh], ih[ilinh], -2,
+                ia, nia, ib, nib)
+        if not restart_l13 and not finis_now:
+            break
+
+    return finis()
+
+
+def _hull_edge(x: Any, y: Any, theta: float) -> tuple:
+    """Edge of the convex hull of (x, y) at angle *theta*.
+
+    Port of ``hullEdge`` (grid.c:1952-2007).  R computes the hull on the
+    non-finite-filtered points but then indexes the ORIGINAL arrays with
+    those hull indices (grid.c:1993-1996) — replicated verbatim.
+    """
+    xs = np.asarray(x, dtype=np.float64)
+    ys = np.asarray(y, dtype=np.float64)
+    keep = np.isfinite(xs) & np.isfinite(ys)
+    xk = xs[keep]
+    yk = ys[keep]
+    hull = _chull(xk, yk)
+    hx = [float(xs[i]) for i in hull]
+    hy = [float(ys[i]) for i in hull]
+    return _polygon_edge(hx, hy, theta)
+
+
+# -- per-class edge functions ------------------------------------------
+# Each returns (edgex, edgey) in inches within the current viewport, or
+# None when there is nothing to measure (R: NULL -> unit(0.5, "npc")).
+
+
+def _resolve_locations_inches(x_unit: Any, y_unit: Any, renderer: Any,
+                              gp: Any) -> Optional[tuple]:
+    """Resolve paired location units to inches with R-style recycling.
+
+    Transform loop of ``L_locnBounds`` (grid.c:5330-5360); non-finite
+    pairs stay in the arrays and only reduce the finite count ``nloc``.
+    Returns ``(xx, yy, nloc)`` or None for empty input.
+    """
+    from ._units import Unit as _U
+    if not isinstance(x_unit, _U) or not isinstance(y_unit, _U):
+        return None
+    nx = max(len(x_unit), len(y_unit))
+    if nx == 0 or len(x_unit) == 0 or len(y_unit) == 0:
+        return None
+    xx = np.empty(nx, dtype=np.float64)
+    yy = np.empty(nx, dtype=np.float64)
+    nloc = 0
+    for i in range(nx):
+        xx[i] = renderer._resolve_to_inches_idx(
+            x_unit, i % len(x_unit), "x", False, gp)
+        yy[i] = renderer._resolve_to_inches_idx(
+            y_unit, i % len(y_unit), "y", False, gp)
+        if np.isfinite(xx[i]) and np.isfinite(yy[i]):
+            nloc += 1
+    return (xx, yy, nloc)
+
+
+def _edge_locn(grob: Any, theta: float) -> Optional[tuple]:
+    """Hull edge of a grob's (x, y) locations.
+
+    Port of ``xDetails.lines``/``.polyline``/``.polygon``/``.pathgrob``/
+    ``.points``/``.null``, all via ``C_locnBounds`` (grid.c:5296-5380).
+    """
+    renderer = _get_renderer()
+    if renderer is None:
+        return None
+    resolved = _resolve_locations_inches(
+        getattr(grob, "x", None), getattr(grob, "y", None),
+        renderer, getattr(grob, "gp", None))
+    if resolved is None:
+        return None
+    xx, yy, nloc = resolved
+    if nloc == 0:
+        return None
+    return _hull_edge(xx, yy, theta)
+
+
+def _edge_segments(grob: Any, theta: float) -> Optional[tuple]:
+    """Hull edge of segment endpoints.
+
+    Port of R ``segmentBounds`` (primitives.R:341-349): endpoints are
+    recycled to a common length, concatenated, then treated as locations.
+    """
+    from ._units import Unit as _U, unit_c
+    renderer = _get_renderer()
+    if renderer is None:
+        return None
+    x0 = getattr(grob, "x0", None)
+    x1 = getattr(grob, "x1", None)
+    y0 = getattr(grob, "y0", None)
+    y1 = getattr(grob, "y1", None)
+    if not all(isinstance(u, _U) for u in (x0, x1, y0, y1)):
+        return None
+    n = max(len(x0), len(x1), len(y0), len(y1))
+    if n == 0:
+        return None
+
+    def _rep(u: Any) -> Any:
+        idx = [i % len(u) for i in range(n)]
+        return unit_c(*[u[i] for i in idx]) if len(u) != n else u
+
+    resolved = _resolve_locations_inches(
+        unit_c(_rep(x0), _rep(x1)), unit_c(_rep(y0), _rep(y1)),
+        renderer, getattr(grob, "gp", None))
+    if resolved is None:
+        return None
+    xx, yy, nloc = resolved
+    if nloc == 0:
+        return None
+    return _hull_edge(xx, yy, theta)
+
+
+def _edge_rect(grob: Any, theta: float) -> Optional[tuple]:
+    """Edge of a rect grob.
+
+    Port of ``gridRect`` with ``draw=FALSE`` (grid.c:3296-3356): each
+    rect is justified, a single rect gets its own ``rectEdge``, several
+    rects get the union-bbox ``rectEdge``.
+    """
+    from ._just import resolve_hjust, resolve_vjust
+    from ._units import Unit as _U
+    renderer = _get_renderer()
+    if renderer is None:
+        return None
+    x_u = getattr(grob, "x", None)
+    y_u = getattr(grob, "y", None)
+    w_u = getattr(grob, "width", None)
+    h_u = getattr(grob, "height", None)
+    if not all(isinstance(u, _U) for u in (x_u, y_u, w_u, h_u)):
+        return None
+    gp = getattr(grob, "gp", None)
+    just = getattr(grob, "just", None)
+    if just is None:
+        just = "centre"
+    hj = float(resolve_hjust(just, getattr(grob, "hjust", None)))
+    vj = float(resolve_vjust(just, getattr(grob, "vjust", None)))
+
+    maxn = max(len(x_u), len(y_u), len(w_u), len(h_u))
+    if maxn == 0:
+        return None
+    xmin = ymin = float("inf")
+    xmax = ymax = float("-inf")
+    edge = None
+    nrect = 0
+    for i in range(maxn):
+        xx = renderer._resolve_to_inches_idx(x_u, i % len(x_u), "x", False, gp)
+        yy = renderer._resolve_to_inches_idx(y_u, i % len(y_u), "y", False, gp)
+        ww = renderer._resolve_to_inches_idx(w_u, i % len(w_u), "x", True, gp)
+        hh = renderer._resolve_to_inches_idx(h_u, i % len(h_u), "y", True, gp)
+        xx = xx - hj * ww
+        yy = yy - vj * hh
+        if (np.isfinite(xx) and np.isfinite(yy)
+                and np.isfinite(ww) and np.isfinite(hh)):
+            xmin = min(xmin, xx, xx + ww)
+            xmax = max(xmax, xx, xx + ww)
+            ymin = min(ymin, yy, yy + hh)
+            ymax = max(ymax, yy, yy + hh)
+            edge = _rect_edge(xx, yy, xx + ww, yy + hh, theta)
+            nrect += 1
+    if nrect == 0:
+        return None
+    if nrect > 1:
+        edge = _rect_edge(xmin, ymin, xmax, ymax, theta)
+    return edge
+
+
+def _edge_circle(grob: Any, theta: float) -> Optional[tuple]:
+    """Edge of a circle grob: on the circle when single, union-bbox
+    ``rectEdge`` when several.
+
+    Port of ``gridCircle`` with ``draw=FALSE`` (grid.c:3020-3096):
+    r = min(|r as width|, |r as height|); like C, the single-circle edge
+    uses the LAST loop iteration's values.
+    """
+    from ._units import Unit as _U
+    renderer = _get_renderer()
+    if renderer is None:
+        return None
+    x_u = getattr(grob, "x", None)
+    y_u = getattr(grob, "y", None)
+    r_u = getattr(grob, "r", None)
+    if not all(isinstance(u, _U) for u in (x_u, y_u, r_u)):
+        return None
+    gp = getattr(grob, "gp", None)
+    nx = max(len(x_u), len(y_u), len(r_u))
+    if nx == 0:
+        return None
+    nr = len(r_u)
+    xmin = ymin = float("inf")
+    xmax = ymax = float("-inf")
+    ncirc = 0
+    xx = yy = rr = float("nan")
+    for i in range(nx):
+        xx = renderer._resolve_to_inches_idx(x_u, i % len(x_u), "x", False, gp)
+        yy = renderer._resolve_to_inches_idx(y_u, i % len(y_u), "y", False, gp)
+        rr1 = renderer._resolve_to_inches_idx(r_u, i % nr, "x", True, gp)
+        rr2 = renderer._resolve_to_inches_idx(r_u, i % nr, "y", True, gp)
+        rr = min(abs(rr1), abs(rr2))
+        if np.isfinite(xx) and np.isfinite(yy) and np.isfinite(rr):
+            xmin = min(xmin, xx - rr, xx + rr)
+            xmax = max(xmax, xx - rr, xx + rr)
+            ymin = min(ymin, yy - rr, yy + rr)
+            ymax = max(ymax, yy - rr, yy + rr)
+            ncirc += 1
+    if ncirc == 0:
+        return None
+    if ncirc == 1:
+        return _circle_edge(xx, yy, rr, theta)
+    return _rect_edge(xmin, ymin, xmax, ymax, theta)
+
+
+def _text_label_extent(label: str, gp: Any, cex: float, lineheight: float,
+                       fontsize: float) -> tuple:
+    """(width, height) of one label in inches (GEStrWidth / GEStrHeight).
+
+    Height is the first line's ASCENT plus lineheight-scaled gaps — R's
+    GEStrHeight never includes the descent (ggplot2's titleGrob adds
+    grobDescent separately, so including it here would double-count).
+    Single metric source for both the text bbox and the text edge.
+    """
+    lines = label.split("\n") if label else [""]
+    w = max(calc_string_metric(ln, gp=gp)["width"] for ln in lines)
+    m0 = calc_string_metric(lines[0], gp=gp)
+    gap = cex * lineheight * fontsize * 1.2 / 72.0
+    h = m0["ascent"] + (len(lines) - 1) * gap
+    return (w, h)
+
+
+def _edge_text(grob: Any, theta: float) -> Optional[tuple]:
+    """Edge of a text grob (rotated per-label boxes).
+
+    Port of ``gridText`` with ``draw=FALSE`` (grid.c:3777-3826) plus
+    ``textRect`` (util.c:178-260): a single label gets ``polygonEdge``
+    on its box corners, several labels the union-bbox ``rectEdge``.
+    """
+    from ._just import resolve_hjust, resolve_vjust
+    from ._units import Unit as _U
+    renderer = _get_renderer()
+    if renderer is None:
+        return None
+    labels = _normalise_labels(grob)
+    if not labels:
+        return None
+    x_u = getattr(grob, "x", None)
+    y_u = getattr(grob, "y", None)
+    if not isinstance(x_u, _U) or not isinstance(y_u, _U):
+        return None
+    gp = _resolve_grob_gp(grob)
+    just = getattr(grob, "just", None)
+    if just is None:
+        just = "centre"
+    hj = float(resolve_hjust(just, getattr(grob, "hjust", None)))
+    vj = float(resolve_vjust(just, getattr(grob, "vjust", None)))
+    rots = np.atleast_1d(np.asarray(getattr(grob, "rot", 0.0),
+                                    dtype=np.float64))
+
+    cex = 1.0
+    lineheight = 1.2
+    fontsize = 12.0
+    if gp is not None:
+        fs = gp.get("fontsize", None)
+        if fs is not None:
+            fontsize = float(fs[0] if isinstance(fs, (list, tuple)) else fs)
+        cx = gp.get("cex", None)
+        if cx is not None:
+            cex = float(cx[0] if isinstance(cx, (list, tuple)) else cx)
+        lh = gp.get("lineheight", None)
+        if lh is not None:
+            lineheight = float(lh[0] if isinstance(lh, (list, tuple)) else lh)
+
+    nx = max(len(x_u), len(y_u))
+    if nx == 0:
+        return None
+    xmin = ymin = float("inf")
+    xmax = ymax = float("-inf")
+    edge = None
+    ntxt = 0
+    for i in range(nx):
+        xx = renderer._resolve_to_inches_idx(x_u, i % len(x_u), "x", False, gp)
+        yy = renderer._resolve_to_inches_idx(y_u, i % len(y_u), "y", False, gp)
+        w, h = _text_label_extent(labels[i % len(labels)], gp,
+                                  cex, lineheight, fontsize)
+        # textRect corners, anti-clockwise (bl, br, tr, tl) with sign
+        # handling for negative extents
+        if w >= 0:
+            if h >= 0:
+                corners = [(0.0, 0.0), (w, 0.0), (w, h), (0.0, h)]
+            else:
+                corners = [(0.0, h), (w, h), (w, 0.0), (0.0, 0.0)]
+        else:
+            if h >= 0:
+                corners = [(w, 0.0), (0.0, 0.0), (0.0, h), (w, h)]
+            else:
+                corners = [(w, h), (0.0, h), (0.0, 0.0), (w, 0.0)]
+        rot = float(rots[i % len(rots)])
+        rad = math.radians(rot)
+        cos_r = math.cos(rad)
+        sin_r = math.sin(rad)
+        cx_pts = []
+        cy_pts = []
+        for px, py in corners:
+            # justify, then rotate, then translate to the anchor
+            jx = px - hj * w
+            jy = py - vj * h
+            cx_pts.append(jx * cos_r - jy * sin_r + xx)
+            cy_pts.append(jx * sin_r + jy * cos_r + yy)
+        if np.isfinite(xx) and np.isfinite(yy):
+            xmin = min(xmin, *cx_pts)
+            xmax = max(xmax, *cx_pts)
+            ymin = min(ymin, *cy_pts)
+            ymax = max(ymax, *cy_pts)
+            # polygonEdge needs CLOCKWISE order: tl, tr, br, bl
+            edge = _polygon_edge(
+                [cx_pts[3], cx_pts[2], cx_pts[1], cx_pts[0]],
+                [cy_pts[3], cy_pts[2], cy_pts[1], cy_pts[0]],
+                theta)
+            ntxt += 1
+    if ntxt == 0:
+        return None
+    if ntxt > 1:
+        edge = _rect_edge(xmin, ymin, xmax, ymax, theta)
+    return edge
+
+
+def _edge_xspline(grob: Any, theta: float) -> Optional[tuple]:
+    """Edge of an xspline grob: hull edge of the EVALUATED curve for a
+    single spline, union-bbox ``rectEdge`` for several ``id`` groups.
+
+    Port of ``xDetails.xspline`` (primitives.R:827-843) via
+    ``gridXspline`` with ``draw=FALSE`` (grid.c:2532-2596).
+    """
+    from ._curve import (
+        _calc_xspline_points, _device_size_in, _xspline_index,
+    )
+    from ._units import convert_x, convert_y
+    renderer = _get_renderer()
+    if renderer is None:
+        return None
+    xx = np.atleast_1d(np.asarray(
+        convert_x(grob.x, "inches", valueOnly=True), dtype=np.float64))
+    yy = np.atleast_1d(np.asarray(
+        convert_y(grob.y, "inches", valueOnly=True), dtype=np.float64))
+    shape = np.resize(
+        np.atleast_1d(np.asarray(getattr(grob, "shape", 0.0),
+                                 dtype=np.float64)),
+        len(xx))
+    open_ = bool(getattr(grob, "open_", True))
+    rep_ends = bool(getattr(grob, "repEnds", True))
+    device_size = _device_size_in()
+    groups = _xspline_index(grob)
+    xmin = ymin = float("inf")
+    xmax = ymax = float("-inf")
+    edge = None
+    nloc = 0
+    for idx in groups:
+        px, py = _calc_xspline_points(
+            xx[idx], yy[idx], shape[idx], open_, rep_ends,
+            units_per_inch=1.0, device_size_in=device_size,
+        )
+        if len(px) <= 1:
+            continue  # GEXspline returns NULL for <=1 point
+        finite = np.isfinite(px) & np.isfinite(py)
+        if np.any(finite):
+            xmin = min(xmin, float(px[finite].min()))
+            xmax = max(xmax, float(px[finite].max()))
+            ymin = min(ymin, float(py[finite].min()))
+            ymax = max(ymax, float(py[finite].max()))
+            nloc += int(finite.sum())
+        edge = _hull_edge(px, py, theta)
+    if nloc == 0:
+        return None
+    if len(groups) > 1:
+        edge = _rect_edge(xmin, ymin, xmax, ymax, theta)
+    return edge
+
+
+def _round_corner(num: int, x: float, y: float, r: float) -> tuple:
+    """One roundrect corner arc — port of R ``roundCorner``
+    (roundrect.R:70-92); slices are R's 1-based inclusive subsets.
+    """
+    n = 40
+    t = np.linspace(0.0, 2.0 * np.pi, n)
+    if num == 1:
+        xc, yc = x + r, y + r
+        sl = slice(19, 30)  # R (n/2):(3*n/4)
+    elif num == 2:
+        xc, yc = x + r, y - r
+        sl = slice(9, 20)   # R (n/4):(n/2)
+    elif num == 3:
+        xc, yc = x - r, y - r
+        sl = slice(0, 10)   # R 1:(n/4)
+    else:
+        xc, yc = x - r, y + r
+        sl = slice(29, 40)  # R (3*n/4):n
+    return (xc + np.cos(t[sl]) * r, yc + np.sin(t[sl]) * r)
+
+
+def _edge_roundrect(grob: Any, theta: float) -> Optional[tuple]:
+    """Hull edge of a roundrect's rounded boundary (``rrpoints``).
+
+    Port of ``xDetails.roundrect`` (roundrect.R:125-140).  R builds the
+    boundary inside the implicit viewport pushed by
+    ``makeContext.roundrect``; this port has no such viewport, so the
+    equivalent justified rectangle is computed in the current context.
+    """
+    from ._just import resolve_hjust, resolve_vjust
+    from ._units import Unit as _U
+    renderer = _get_renderer()
+    if renderer is None:
+        return None
+    x_u = getattr(grob, "x", None)
+    y_u = getattr(grob, "y", None)
+    w_u = getattr(grob, "width", None)
+    h_u = getattr(grob, "height", None)
+    r_u = getattr(grob, "r", None)
+    if not all(isinstance(u, _U) for u in (x_u, y_u, w_u, h_u, r_u)):
+        return None
+    gp = getattr(grob, "gp", None)
+    just = getattr(grob, "just", None)
+    if just is None:
+        just = "centre"
+    hj = float(resolve_hjust(just, getattr(grob, "hjust", None)))
+    vj = float(resolve_vjust(just, getattr(grob, "vjust", None)))
+    xx = renderer._resolve_to_inches_idx(x_u, 0, "x", False, gp)
+    yy = renderer._resolve_to_inches_idx(y_u, 0, "y", False, gp)
+    ww = renderer._resolve_to_inches_idx(w_u, 0, "x", True, gp)
+    hh = renderer._resolve_to_inches_idx(h_u, 0, "y", True, gp)
+    if not (np.isfinite(xx) and np.isfinite(yy)
+            and np.isfinite(ww) and np.isfinite(hh)):
+        return None
+    left = xx - hj * ww
+    bottom = yy - vj * hh
+    right = left + ww
+    top = bottom + hh
+    # rrpoints: r = min(radius as width, radius as height)
+    r = min(renderer._resolve_to_inches_idx(r_u, 0, "x", True, gp),
+            renderer._resolve_to_inches_idx(r_u, 0, "y", True, gp))
+    c1x, c1y = _round_corner(1, left, bottom, r)
+    c2x, c2y = _round_corner(2, left, top, r)
+    c3x, c3y = _round_corner(3, right, top, r)
+    c4x, c4y = _round_corner(4, right, bottom, r)
+    bx = np.concatenate([
+        [left + r, right - r], c4x, [right, right], c3x,
+        [right - r, left + r], c2x, [left, left], c1x])
+    by = np.concatenate([
+        [bottom, bottom], c4y, [bottom + r, top - r], c3y,
+        [top, top], c2y, [top - r, bottom + r], c1y])
+    return _hull_edge(bx, by, theta)
+
+
+_EDGE_DISPATCH: Dict[str, Any] = {
+    "lines": _edge_locn,
+    "polyline": _edge_locn,
+    "polygon": _edge_locn,
+    "pathgrob": _edge_locn,
+    "points": _edge_locn,
+    "null": _edge_locn,
+    "segments": _edge_segments,
+    "rect": _edge_rect,
+    # rect logic: this port stores explicit raster width/height units
+    # (same convention as _raster_width_details)
+    "rastergrob": _edge_rect,
+    "circle": _edge_circle,
+    "text": _edge_text,
+    "xspline": _edge_xspline,
+    "roundrect": _edge_roundrect,
+}
+
+
+def _details_delegate(x: Any) -> Any:
+    """The grob whose x/yDetails stand in for a delegating grob.
+
+    curve (curve.R:463-478): the single child of the expanded curve, or
+    the gTree itself (-> 0.5npc default) when there are several children.
+    functiongrob (function.R:49-57): the generated lines grob.
+    """
+    if getattr(x, "_grid_class", None) == "functiongrob":
+        return x.make_content()
+    content = x.make_content()
+    order = getattr(content, "_children_order", [])
+    if len(order) == 1:
+        return content._children[order[0]]
+    return content
+
+
+# ---------------------------------------------------------------------------
 # _grid_class dispatch tables
 # ---------------------------------------------------------------------------
 
@@ -1168,44 +2075,55 @@ def descent_details(x: Any) -> Unit:
     return Unit(0, "inches")
 
 
-def x_details(x: Any, theta: float = 0) -> Unit:
-    """Return the x position on the edge of grob *x* at angle *theta*.
+def _xy_details(x: Any, theta: float, axis_idx: int) -> Unit:
+    """Shared implementation of :func:`x_details` / :func:`y_details`.
 
-    Parameters
-    ----------
-    x : Grob
-        A graphical object.
-    theta : float, optional
-        Angle in degrees (default ``0``).
-
-    Returns
-    -------
-    Unit
-        The x position as a grid unit.  Default is ``Unit(0.5, "npc")``.
+    Mirrors R's ``xDetails``/``yDetails`` S3 dispatch (size.R:37-55):
+    class handlers, then the delegating classes (curve, functiongrob),
+    then a grob method override (e.g. beziergrob), then the
+    ``unit(0.5, "npc")`` default.
     """
-    if hasattr(x, "x_details") and callable(x.x_details):
-        return x.x_details(theta)
+    # normalise like grobX()'s convertTheta so rectEdge's exact
+    # 0/90/180/270 special cases stay reachable
+    theta = float(theta) % 360.0
+    cls = getattr(x, "_grid_class", None)
+    edge_fn = _EDGE_DISPATCH.get(cls)
+    if edge_fn is not None:
+        edge = edge_fn(x, theta)
+        if edge is None:
+            return Unit(0.5, "npc")
+        return Unit(float(edge[axis_idx]), "inches")
+    if cls in ("curve", "functiongrob"):
+        return _xy_details(_details_delegate(x), theta, axis_idx)
+    method = getattr(x, "x_details" if axis_idx == 0 else "y_details", None)
+    if callable(method):
+        result = method(theta)
+        # the base Grob method returns None; only a real override counts
+        if result is not None:
+            return result
     return Unit(0.5, "npc")
+
+
+def x_details(x: Any, theta: float = 0) -> Unit:
+    """x position on the edge of grob *x* at angle *theta* (degrees,
+    0 = East / 90 = North).
+
+    Port of R ``xDetails`` (size.R:37-45) and its per-class methods.
+    Returns inches within the current viewport context, or
+    ``Unit(0.5, "npc")`` when there is no edge to measure.
+    """
+    return _xy_details(x, theta, 0)
 
 
 def y_details(x: Any, theta: float = 0) -> Unit:
-    """Return the y position on the edge of grob *x* at angle *theta*.
+    """y position on the edge of grob *x* at angle *theta* (degrees,
+    0 = East / 90 = North).
 
-    Parameters
-    ----------
-    x : Grob
-        A graphical object.
-    theta : float, optional
-        Angle in degrees (default ``0``).
-
-    Returns
-    -------
-    Unit
-        The y position as a grid unit.  Default is ``Unit(0.5, "npc")``.
+    Port of R ``yDetails`` (size.R:47-55) and its per-class methods.
+    Returns inches within the current viewport context, or
+    ``Unit(0.5, "npc")`` when there is no edge to measure.
     """
-    if hasattr(x, "y_details") and callable(x.y_details):
-        return x.y_details(theta)
-    return Unit(0.5, "npc")
+    return _xy_details(x, theta, 1)
 
 
 # ---------------------------------------------------------------------------
