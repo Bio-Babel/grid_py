@@ -40,7 +40,45 @@ from ._vp_calc import (
     _INCHES_PER,
 )
 
-__all__ = ["GridRenderer"]
+__all__ = ["GridRenderer", "split_finite_runs"]
+
+
+def split_finite_runs(
+    x: "np.ndarray", y: "np.ndarray",
+) -> List[Tuple["np.ndarray", "np.ndarray"]]:
+    """Split paired coordinates into runs of consecutive finite points.
+
+    Port of R grid's non-finite ("pen up") semantics for line and
+    polygon primitives (grid/src/grid.c ``gridLines`` / ``L_polygon``):
+    the drawing loop tracks the previous point (``xold``/``yold``) and
+    emits one ``GEPolyline``/``GEPolygon`` per run of consecutive
+    ``R_FINITE`` points — a point whose x *or* y is NA/NaN/Inf breaks
+    the shape and nothing is drawn at or through it.
+
+    Returns a list of ``(x_run, y_run)`` pairs; runs shorter than 2
+    points are dropped (grid.c requires ``i - start > 1`` before
+    emitting a mid-line run, and a trailing 1-point run draws nothing).
+    """
+    n = min(len(x), len(y))
+    if n == 0:
+        return []
+    finite = np.isfinite(np.asarray(x[:n], dtype=float)) \
+        & np.isfinite(np.asarray(y[:n], dtype=float))
+    if finite.all():
+        return [(x[:n], y[:n])] if n >= 2 else []
+    runs: List[Tuple["np.ndarray", "np.ndarray"]] = []
+    start: Optional[int] = None
+    for i in range(n):
+        if finite[i]:
+            if start is None:
+                start = i
+        else:
+            if start is not None and i - start >= 2:
+                runs.append((x[start:i], y[start:i]))
+            start = None
+    if start is not None and n - start >= 2:
+        runs.append((x[start:n], y[start:n]))
+    return runs
 
 
 class GridRenderer(ABC):

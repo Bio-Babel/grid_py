@@ -30,7 +30,7 @@ from ._colour import parse_r_colour as _parse_colour
 from ._gpar import Gpar
 from ._lty import is_blank_lty, resolve_lty
 from ._patterns import LinearGradient, RadialGradient, Pattern
-from ._renderer_base import GridRenderer
+from ._renderer_base import GridRenderer, split_finite_runs
 
 __all__ = ["CairoRenderer"]
 
@@ -963,7 +963,13 @@ class CairoRenderer(GridRenderer):
         y: np.ndarray,
         gp: Optional[Gpar] = None,
     ) -> None:
-        """Draw connected lines.  x, y are in device coordinates."""
+        """Draw connected lines.  x, y are in device coordinates.
+
+        Non-finite coordinates lift the pen (R engine semantics): the
+        line breaks there and resumes at the next finite point.  Cairo
+        itself has no NA concept — a NaN passed to ``line_to`` collapses
+        to the fixed-point origin, drawing spurious strokes to (0,0).
+        """
         n = max(len(x), len(y))
         if n < 2:
             return
@@ -975,9 +981,10 @@ class CairoRenderer(GridRenderer):
         ctx = self._ctx
         ctx.save()
 
-        ctx.move_to(x[0], y[0])
-        for i in range(1, n):
-            ctx.line_to(x[i], y[i])
+        for px, py in split_finite_runs(x, y):
+            ctx.move_to(px[0], py[0])
+            for i in range(1, len(px)):
+                ctx.line_to(px[i], py[i])
 
         if self._path_collecting:
             ctx.restore()
@@ -1007,13 +1014,10 @@ class CairoRenderer(GridRenderer):
 
         for uid in np.unique(id_):
             mask = id_ == uid
-            px = x[mask]
-            py = y[mask]
-            if len(px) < 2:
-                continue
-            ctx.move_to(px[0], py[0])
-            for i in range(1, len(px)):
-                ctx.line_to(px[i], py[i])
+            for px, py in split_finite_runs(x[mask], y[mask]):
+                ctx.move_to(px[0], py[0])
+                for i in range(1, len(px)):
+                    ctx.line_to(px[i], py[i])
 
         if self._path_collecting:
             ctx.restore()
@@ -1039,6 +1043,13 @@ class CairoRenderer(GridRenderer):
 
         n = min(len(x0), len(y0), len(x1), len(y1))
         for i in range(n):
+            # R engine: a segment with any non-finite endpoint is
+            # silently skipped (GESegments R_FINITE guard).
+            if not (
+                math.isfinite(x0[i]) and math.isfinite(y0[i])
+                and math.isfinite(x1[i]) and math.isfinite(y1[i])
+            ):
+                continue
             ctx.move_to(x0[i], y0[i])
             ctx.line_to(x1[i], y1[i])
 
@@ -1061,27 +1072,41 @@ class CairoRenderer(GridRenderer):
     ) -> None:
         if len(x) < 3:
             return
+        # R grid (grid.c L_polygon): non-finite vertices split the
+        # polygon into separate closed sub-polygons — each finite run
+        # gets its own GEPolygon call.  All runs share this polygon's
+        # gc and (for gradients) the whole shape's bounding box.
+        runs = split_finite_runs(np.asarray(x, dtype=float),
+                                 np.asarray(y, dtype=float))
+        if not runs:
+            return
         ctx = self._ctx
         ctx.save()
 
-        ctx.move_to(x[0], y[0])
-        for i in range(1, len(x)):
-            ctx.line_to(x[i], y[i])
-        ctx.close_path()
-
         if self._path_collecting:
+            for px, py in runs:
+                ctx.move_to(px[0], py[0])
+                for i in range(1, len(px)):
+                    ctx.line_to(px[i], py[i])
+                ctx.close_path()
             ctx.restore()
             return
 
-        bbox = (float(np.min(x)), float(np.min(y)),
-                float(np.ptp(x)), float(np.ptp(y)))
-        self._apply_fill(gp, bbox=bbox)
-
-        stroke = self._apply_stroke(gp)
-        if stroke[3] > 0:
-            ctx.stroke()
-        else:
-            ctx.new_path()
+        all_x = np.concatenate([px for px, _ in runs])
+        all_y = np.concatenate([py for _, py in runs])
+        bbox = (float(np.min(all_x)), float(np.min(all_y)),
+                float(np.ptp(all_x)), float(np.ptp(all_y)))
+        for px, py in runs:
+            ctx.move_to(px[0], py[0])
+            for i in range(1, len(px)):
+                ctx.line_to(px[i], py[i])
+            ctx.close_path()
+            self._apply_fill(gp, bbox=bbox)
+            stroke = self._apply_stroke(gp)
+            if stroke[3] > 0:
+                ctx.stroke()
+            else:
+                ctx.new_path()
         ctx.restore()
 
     def draw_path(
@@ -1101,6 +1126,13 @@ class CairoRenderer(GridRenderer):
             else cairo.FILL_RULE_WINDING
         )
         ctx.set_fill_rule(fill_rule)
+
+        # R grid (grid.c L_path): "NO NA values allowed in 'x' or 'y'" —
+        # a non-finite coordinate in a graphics path is an error.
+        if not (np.all(np.isfinite(np.asarray(x, dtype=float)))
+                and np.all(np.isfinite(np.asarray(y, dtype=float)))):
+            ctx.restore()
+            raise ValueError("non-finite x or y in graphics path")
 
         for pid in np.unique(path_id):
             mask = path_id == pid
@@ -1637,7 +1669,14 @@ class CairoRenderer(GridRenderer):
         for i in range(n):
             cx = x[i]
             cy = y[i]
+            # R grid (grid.c gridPoints): a symbol is drawn only when its
+            # location AND its size are finite — the outer R_FINITE(xx,yy)
+            # guard and the inner R_FINITE(symbolSize) guard.
+            if not (math.isfinite(cx) and math.isfinite(cy)):
+                continue
             r = size_arr[i] * scale if i < len(size_arr) else size * scale
+            if not math.isfinite(r):
+                continue
             lwd_i = float(lwd_arr[i % len(lwd_arr)])
             pch_i = pch_arr[i]
             if isinstance(pch_i, (str, bytes, np.str_)):

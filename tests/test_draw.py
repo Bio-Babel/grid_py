@@ -316,3 +316,57 @@ class TestParseColour:
     def test_transparent(self):
         _, _, _, a = _parse_colour("transparent")
         assert a == 0.0
+
+
+class TestVectorisedGparDispatch:
+    """Per-sub-polyline / per-segment gpar recycling.
+
+    Gold standard: grid/src/grid.c gridLines / L_segments call
+    ``updateGContext(gp, j)`` per sub-line / segment, so a vectorised
+    colour/lwd/lty applies element-wise.  A scalar dash-pattern lty
+    ("44") must NOT be mistaken for a vectorised value.
+    """
+
+    def test_scalar_dash_lty_not_vectorised(self):
+        from grid_py._draw import _gpar_is_vectorised
+        assert _gpar_is_vectorised(Gpar(col="red", lwd=2, lty="44")) is False
+        assert _gpar_is_vectorised(Gpar(col="red", lty="dashed")) is False
+
+    def test_vectorised_colour_detected(self):
+        from grid_py._draw import _gpar_is_vectorised, _subset_gpar
+        gp = Gpar(col=["red", "blue"], lwd=3, lty="44")
+        assert _gpar_is_vectorised(gp) is True
+        # per-line colour, but the scalar dash pattern survives intact
+        assert _subset_gpar(gp, 0).get("col") == "red"
+        assert _subset_gpar(gp, 1).get("col") == "blue"
+        assert _subset_gpar(gp, 0).get("lty") == "44"
+        assert _subset_gpar(gp, 1).get("lty") == "44"
+
+    def test_vectorised_lty_types_indexed(self):
+        from grid_py._draw import _subset_gpar
+        gp = Gpar(col="black", lty=["solid", "dashed"])
+        assert _subset_gpar(gp, 0).get("lty") == "solid"
+        assert _subset_gpar(gp, 1).get("lty") == "dashed"
+
+    def test_polyline_vector_gp_renders(self):
+        from grid_py._draw import _render_grob
+        from grid_py import polyline_grob
+        r = CairoRenderer(width=4, height=3, dpi=100)
+        gp = Gpar(col=["red", "blue"], lwd=[2, 5])
+        g = polyline_grob(
+            x=np.array([0.1, 0.5, 0.6, 0.9]),
+            y=np.array([0.1, 0.5, 0.6, 0.2]),
+            id=[1, 1, 2, 2], gp=gp,
+        )
+        _render_grob(g, r, gp=gp)  # must not raise
+
+    def test_segments_vector_gp_renders(self):
+        from grid_py._draw import _render_grob
+        from grid_py import segments_grob
+        r = CairoRenderer(width=4, height=3, dpi=100)
+        gp = Gpar(col=["green", "purple"], lwd=[2, 5])
+        g = segments_grob(
+            x0=np.array([0.2, 0.4]), y0=np.array([0.1, 0.1]),
+            x1=np.array([0.2, 0.4]), y1=np.array([0.4, 0.4]), gp=gp,
+        )
+        _render_grob(g, r, gp=gp)  # must not raise

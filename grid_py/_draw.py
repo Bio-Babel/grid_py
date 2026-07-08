@@ -90,6 +90,23 @@ def _resolve_just(grob: Any) -> Tuple[float, float]:
     return float(hjust if hjust is not None else 0.5), float(vjust if vjust is not None else 0.5)
 
 
+def _gpar_is_vectorised(gp: Optional[Gpar]) -> bool:
+    """Whether any graphical parameter carries more than one value.
+
+    Used by the polyline / segments branches to decide between the
+    scalar-gp fast path (one renderer call) and the R-faithful
+    per-entity loop (grid.c ``gcontextFromgpar(gp, i)``).
+    """
+    if gp is None:
+        return False
+    for val in gp.params.values():
+        if isinstance(val, np.ndarray) and val.ndim >= 1 and len(val) > 1:
+            return True
+        if isinstance(val, (list, tuple)) and len(val) > 1:
+            return True
+    return False
+
+
 def _subset_gpar(gp: Optional[Gpar], i: int) -> Optional[Gpar]:
     """Return a Gpar containing only the *i*-th element of each vectorised param.
 
@@ -382,7 +399,19 @@ def _render_grob(
             id_ = np.repeat(np.arange(1, len(lengths) + 1), lengths)
         if id_ is not None:
             id_ = np.atleast_1d(np.asarray(id_, dtype=int))
-        renderer.draw_polyline(x, y, id_=id_, gp=gp)
+        # R grid recycles vectorised gpar over sub-polylines
+        # (grid.c::L_polyline: gcontextFromgpar(gp, i) per line, same
+        # convention as the polygon branch above).  When gp carries
+        # per-line vectors, draw each sub-polyline with its own slice;
+        # the scalar-gp fast path stays a single renderer call.
+        if id_ is not None and _gpar_is_vectorised(gp):
+            for idx, uid in enumerate(np.unique(id_)):
+                mask = id_ == uid
+                renderer.draw_polyline(
+                    x[mask], y[mask], id_=None, gp=_subset_gpar(gp, idx),
+                )
+        else:
+            renderer.draw_polyline(x, y, id_=id_, gp=gp)
 
         # R linesGrob / polylineGrob carry an optional ``arrow=`` (port
         # of src/grid.c::L_lines / L_polyline arrowhead emission).  The
@@ -394,12 +423,13 @@ def _render_grob(
         arr = getattr(grob, "arrow", None)
         if arr is not None:
             if id_ is not None:
-                for uid in np.unique(id_):
+                for idx, uid in enumerate(np.unique(id_)):
                     mask = id_ == uid
                     if int(np.sum(mask)) >= 2:
                         _draw_arrow_heads(
                             np.asarray(x)[mask], np.asarray(y)[mask],
-                            arr, renderer, gp,
+                            arr, renderer,
+                            _subset_gpar(gp, idx) if gp else gp,
                         )
             elif len(x) >= 2:
                 _draw_arrow_heads(
@@ -414,7 +444,17 @@ def _render_grob(
         x1, y1 = renderer.resolve_loc_array(
             getattr(grob, "x1", []), getattr(grob, "y1", []), gp=gp,
         )
-        renderer.draw_segments(x0=x0, y0=y0, x1=x1, y1=y1, gp=gp)
+        # R grid applies vectorised gpar per segment (grid.c::L_segments:
+        # gcontextFromgpar(gp, i) inside the segment loop).
+        if _gpar_is_vectorised(gp):
+            for i in range(min(len(x0), len(y0), len(x1), len(y1))):
+                renderer.draw_segments(
+                    x0=x0[i:i + 1], y0=y0[i:i + 1],
+                    x1=x1[i:i + 1], y1=y1[i:i + 1],
+                    gp=_subset_gpar(gp, i),
+                )
+        else:
+            renderer.draw_segments(x0=x0, y0=y0, x1=x1, y1=y1, gp=gp)
 
         # Each segment may carry its own arrowhead (``arrow=`` parameter on
         # segmentsGrob).  Draw one per row, treating the segment's two points
@@ -425,7 +465,8 @@ def _render_grob(
                 _draw_arrow_heads(
                     np.array([float(x0[i]), float(x1[i])]),
                     np.array([float(y0[i]), float(y1[i])]),
-                    arr, renderer, gp,
+                    arr, renderer,
+                    _subset_gpar(gp, i) if gp else gp,
                 )
 
     # ---- xspline ---------------------------------------------------------

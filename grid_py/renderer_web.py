@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import io
 import json
+import math
 import os
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -19,7 +20,7 @@ from ._font_metrics import get_font_backend, FontMetricsBackend
 from ._gpar import Gpar
 from ._lty import is_blank_lty, resolve_lty
 from ._patterns import LinearGradient, RadialGradient, Pattern
-from ._renderer_base import GridRenderer
+from ._renderer_base import GridRenderer, split_finite_runs
 from ._scene_graph import (
     DefsCollection,
     GrobNode,
@@ -425,10 +426,23 @@ class WebRenderer(GridRenderer):
             x = np.resize(x, n)
         if len(y) < n:
             y = np.resize(y, n)
+        # Non-finite coordinates break the line (R engine pen-up
+        # semantics); NaN must never reach the JSON payload.
+        runs = split_finite_runs(x, y)
+        if not runs:
+            return
+        if len(runs) == 1:
+            px, py = runs[0]
+            props = {"x": [float(v) for v in px], "y": [float(v) for v in py]}
+        else:
+            props = {"groups": [
+                {"x": [float(v) for v in px], "y": [float(v) for v in py]}
+                for px, py in runs
+            ]}
         node = GrobNode(
             node_id=self._id_gen.next("grob"),
             node_type="polyline",
-            props={"x": [float(v) for v in x], "y": [float(v) for v in y]},
+            props=props,
             gpar=_serialise_gpar(gp, self._defs, self._id_gen),
             render_hint=self._default_hint,
         )
@@ -443,14 +457,11 @@ class WebRenderer(GridRenderer):
         groups = []
         for uid in np.unique(id_):
             mask = id_ == uid
-            px = x[mask]
-            py = y[mask]
-            if len(px) < 2:
-                continue
-            groups.append({
-                "x": [float(v) for v in px],
-                "y": [float(v) for v in py],
-            })
+            for px, py in split_finite_runs(x[mask], y[mask]):
+                groups.append({
+                    "x": [float(v) for v in px],
+                    "y": [float(v) for v in py],
+                })
         node = GrobNode(
             node_id=self._id_gen.next("grob"),
             node_type="polyline",
@@ -464,14 +475,20 @@ class WebRenderer(GridRenderer):
                       x1: "np.ndarray", y1: "np.ndarray",
                       gp: Optional[Any] = None) -> None:
         n = min(len(x0), len(y0), len(x1), len(y1))
+        # R engine: segments with any non-finite endpoint are skipped.
+        keep = [
+            i for i in range(n)
+            if math.isfinite(x0[i]) and math.isfinite(y0[i])
+            and math.isfinite(x1[i]) and math.isfinite(y1[i])
+        ]
         node = GrobNode(
             node_id=self._id_gen.next("grob"),
             node_type="segments",
             props={
-                "x0": [float(x0[i]) for i in range(n)],
-                "y0": [float(y0[i]) for i in range(n)],
-                "x1": [float(x1[i]) for i in range(n)],
-                "y1": [float(y1[i]) for i in range(n)],
+                "x0": [float(x0[i]) for i in keep],
+                "y0": [float(y0[i]) for i in keep],
+                "x1": [float(x1[i]) for i in keep],
+                "y1": [float(y1[i]) for i in keep],
             },
             gpar=_serialise_gpar(gp, self._defs, self._id_gen),
             render_hint=self._default_hint,
@@ -482,14 +499,20 @@ class WebRenderer(GridRenderer):
                      gp: Optional[Any] = None) -> None:
         if len(x) < 3:
             return
-        node = GrobNode(
-            node_id=self._id_gen.next("grob"),
-            node_type="polygon",
-            props={"x": [float(v) for v in x], "y": [float(v) for v in y]},
-            gpar=_serialise_gpar(gp, self._defs, self._id_gen),
-            render_hint=self._default_hint,
-        )
-        self._append_node(node)
+        # R grid (grid.c L_polygon): non-finite vertices split the
+        # polygon into separate closed sub-polygons, one GEPolygon per
+        # finite run.  Emit one node per run so NaN never reaches JSON.
+        for px, py in split_finite_runs(np.asarray(x, dtype=float),
+                                        np.asarray(y, dtype=float)):
+            node = GrobNode(
+                node_id=self._id_gen.next("grob"),
+                node_type="polygon",
+                props={"x": [float(v) for v in px],
+                       "y": [float(v) for v in py]},
+                gpar=_serialise_gpar(gp, self._defs, self._id_gen),
+                render_hint=self._default_hint,
+            )
+            self._append_node(node)
 
     def draw_path(self, x: "np.ndarray", y: "np.ndarray",
                   path_id: "np.ndarray", rule: str = "winding",

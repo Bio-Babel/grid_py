@@ -540,3 +540,94 @@ class TestIntegration:
         m = renderer.text_extents("Hello World")
         assert m["width"] > 0
         assert m["ascent"] > 0
+
+
+# ------------------------------------------------------------------ #
+# Non-finite ("pen up") coordinate semantics                        #
+#                                                                    #
+# Gold standard: grid/src/grid.c — gridLines / L_segments /         #
+# L_polygon / L_path / gridPoints. A non-finite (NA/NaN/Inf) device #
+# coordinate breaks lines/polygons into finite runs, is skipped for #
+# segments/points, and is an error for a graphics path.             #
+# ------------------------------------------------------------------ #
+
+class TestNonFiniteCoords:
+    def test_split_finite_runs_matches_gridlines(self):
+        from grid_py._renderer_base import split_finite_runs
+        x = np.array([1.0, 2.0, np.nan, 4.0, 5.0])
+        y = np.array([1.0, 2.0, np.nan, 4.0, 5.0])
+        runs = split_finite_runs(x, y)
+        # grid.c: emit each run with length >= 2 (i - start > 1)
+        assert len(runs) == 2
+        assert list(runs[0][0]) == [1.0, 2.0]
+        assert list(runs[1][0]) == [4.0, 5.0]
+
+    def test_lone_point_between_breaks_drops(self):
+        from grid_py._renderer_base import split_finite_runs
+        # a single finite point flanked by NAs draws no line (run len 1)
+        runs = split_finite_runs(
+            np.array([1.0, np.nan, 3.0, np.nan, 5.0, 6.0]), np.ones(6),
+        )
+        assert len(runs) == 1
+        assert list(runs[0][0]) == [5.0, 6.0]
+
+    def test_na_in_either_axis_breaks(self):
+        from grid_py._renderer_base import split_finite_runs
+        # y-only NA still breaks the line (grid.c checks both axes)
+        runs = split_finite_runs(
+            np.array([1.0, 2.0, 3.0]), np.array([1.0, np.nan, 3.0]),
+        )
+        assert len(runs) == 0
+
+    def test_draw_line_with_nan_does_not_raise(self, renderer):
+        # Regression: NaN fed to cairo line_to used to collapse to the
+        # device origin, drawing a spurious stroke to (0,0).
+        renderer.draw_line(
+            np.array([0.1, 0.5, np.nan, 0.7, 0.9]),
+            np.array([0.1, 0.5, np.nan, 0.7, 0.9]),
+            gp=Gpar(col="black"),
+        )
+
+    def test_draw_polyline_ids_with_nan(self, renderer):
+        renderer.draw_polyline(
+            np.array([0.1, 0.5, np.nan, 0.6, 0.9]),
+            np.array([0.1, 0.5, np.nan, 0.6, 0.9]),
+            id_=np.array([1, 1, 1, 2, 2]),
+            gp=Gpar(col="red"),
+        )
+
+    def test_draw_segments_skips_nonfinite_segment(self, renderer):
+        # middle segment has a NaN endpoint → skipped, others drawn
+        renderer.draw_segments(
+            x0=np.array([0.1, np.nan, 0.5]),
+            y0=np.array([0.1, 0.2, 0.5]),
+            x1=np.array([0.2, 0.4, 0.9]),
+            y1=np.array([0.4, 0.4, 0.9]),
+            gp=Gpar(col="black"),
+        )
+
+    def test_draw_points_skips_nonfinite(self, renderer):
+        renderer.draw_points(
+            np.array([0.1, np.nan, 0.5]),
+            np.array([0.1, 0.2, np.nan]),
+            size=0.02, pch=19, gp=Gpar(col="black", fill="black"),
+        )
+
+    def test_draw_polygon_splits_into_subpolygons(self, renderer):
+        # grid.c L_polygon: a NaN vertex splits into separate closed
+        # sub-polygons (does not connect across the break)
+        renderer.draw_polygon(
+            np.array([0.1, 0.3, 0.2, np.nan, 0.6, 0.9, 0.75]),
+            np.array([0.1, 0.1, 0.3, np.nan, 0.6, 0.6, 0.9]),
+            gp=Gpar(fill="grey", col="black"),
+        )
+
+    def test_draw_path_raises_on_nonfinite(self, renderer):
+        # grid.c L_path: "non-finite x or y in graphics path" is an error
+        with pytest.raises(ValueError, match="non-finite"):
+            renderer.draw_path(
+                np.array([0.1, 0.5, np.nan, 0.9]),
+                np.array([0.1, 0.5, 0.5, 0.9]),
+                path_id=np.array([1, 1, 1, 1]),
+                gp=Gpar(fill="grey"),
+            )
