@@ -719,19 +719,22 @@ def _render_grob(
                 x=x, y=y, path_id=sub_id, rule=rule, gp=gp,
             )
         else:
-            # Map per-point compound id from per-sub-path path_id.
-            path_id_arr = np.atleast_1d(np.asarray(path_id, dtype=int))
-            unique_subs = np.unique(sub_id)
-            sub_to_compound = {int(s): int(path_id_arr[k % len(path_id_arr)])
-                               for k, s in enumerate(unique_subs)}
-            point_compound = np.asarray(
-                [sub_to_compound[int(s)] for s in sub_id], dtype=int,
-            )
-            for ck in np.unique(point_compound):
-                mask = point_compound == ck
+            # R pathGrob (primitives.R drawDetails.pathgrob): sub-path ids
+            # only need to be unique WITHIN each compound (pathId), not
+            # globally, and each compound gets its own gc (grid.c L_path:
+            # updateGContext(gp, h)).
+            path_id_arr = np.atleast_1d(np.asarray(path_id))
+            if len(path_id_arr) < len(x):
+                path_id_arr = np.resize(path_id_arr, len(x))
+            vectorised = _gpar_is_vectorised(gp)
+            for h, ck in enumerate(np.unique(path_id_arr)):
+                mask = path_id_arr == ck
+                sub_in = sub_id[mask]
+                _, sub_dense = np.unique(sub_in, return_inverse=True)
                 renderer.draw_path(
-                    x=x[mask], y=y[mask], path_id=sub_id[mask],
-                    rule=rule, gp=gp,
+                    x=x[mask], y=y[mask], path_id=sub_dense + 1,
+                    rule=rule,
+                    gp=_subset_gpar(gp, h) if vectorised else gp,
                 )
 
     # ---- rastergrob ------------------------------------------------------
