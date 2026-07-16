@@ -6,7 +6,7 @@ units, viewports, grobs (graphical objects), layouts, and rendering via
 Cairo (pycairo).
 """
 
-__version__ = "4.5.3.post5"
+__version__ = "4.5.3.post6"
 
 # --- Utilities ---
 from grid_py._utils import depth, explode, grid_pretty, n2mfrow
